@@ -365,25 +365,41 @@ document.getElementById('chk-burst-only').addEventListener('change', () => {
   loadCuller();
 });
 
-async function loadCuller() {
+let cullOffset = 0;
+const CULL_BATCH_SIZE = 80;
+
+async function loadCuller(append = false) {
   const threshold = sliderThreshold.value;
   const burstOnly = document.getElementById('chk-burst-only').checked;
   const gallery = document.getElementById('culler-gallery');
-  gallery.innerHTML = '<p style="color:var(--text-muted); padding:20px;">Loading media analysis...</p>';
+
+  if (!append) {
+    cullOffset = 0;
+    cullingItems = [];
+    selectedCullIds.clear();
+    gallery.innerHTML = '<p style="color:var(--text-muted); padding:20px;">Loading media analysis...</p>';
+  }
+
+  const existingMore = document.getElementById('cull-load-more-box');
+  if (existingMore) existingMore.remove();
 
   try {
-    const res = await fetch(API_BASE + '/api/culling?threshold=' + threshold + '&burst_only=' + burstOnly + '&limit=120');
-    cullingItems = await res.json();
-    gallery.innerHTML = '';
+    const res = await fetch(API_BASE + '/api/culling?threshold=' + threshold + '&burst_only=' + burstOnly + '&limit=' + CULL_BATCH_SIZE + '&offset=' + cullOffset);
+    const newItems = await res.json();
 
-    if (cullingItems.length === 0) {
+    if (!append) {
+      gallery.innerHTML = '';
+    }
+
+    if (newItems.length === 0 && !append) {
       gallery.innerHTML = '<p style="color:var(--text-muted); padding:20px;">No photos found matching criteria. Run a scan on your photo folders first!</p>';
       return;
     }
 
-    selectedCullIds.clear();
+    cullingItems = cullingItems.concat(newItems);
+    cullOffset += newItems.length;
 
-    cullingItems.forEach(item => {
+    newItems.forEach(item => {
       const card = document.createElement('div');
       card.className = 'media-card';
       card.dataset.id = item.id;
@@ -400,7 +416,7 @@ async function loadCuller() {
       }
 
       card.innerHTML = '<div class="media-thumb-container">'
-        + '<img class="media-thumb" src="' + API_BASE + '/api/thumbnail/' + item.id + '" loading="lazy" onerror="this.style.opacity=0.3">'
+        + '<img class="media-thumb" src="' + API_BASE + '/api/thumbnail/' + item.id + '" loading="lazy" decoding="async" width="200" height="150" onerror="this.style.opacity=0.3">'
         + '<div class="blur-badge ' + blurBadgeClass + '">' + blurBadgeText + '</div>'
         + burstBadgeHtml
         + '</div>'
@@ -431,8 +447,25 @@ async function loadCuller() {
 
       gallery.appendChild(card);
     });
+
+    if (newItems.length === CULL_BATCH_SIZE) {
+      const moreBox = document.createElement('div');
+      moreBox.id = 'cull-load-more-box';
+      moreBox.style.gridColumn = '1 / -1';
+      moreBox.style.textAlign = 'center';
+      moreBox.style.padding = '24px 0';
+      moreBox.innerHTML = '<button id="btn-load-more-cull" class="btn btn-secondary" style="padding:8px 24px; font-size:13px; font-weight:600;">Load Next ' + CULL_BATCH_SIZE + ' Photos ↓</button>';
+      gallery.appendChild(moreBox);
+
+      document.getElementById('btn-load-more-cull').addEventListener('click', () => {
+        loadCuller(true);
+      });
+    }
+
   } catch (err) {
-    gallery.innerHTML = '<p style="color:var(--accent-rose);">Failed to load culling gallery: ' + err + '</p>';
+    if (!append) {
+      gallery.innerHTML = '<p style="color:var(--accent-rose);">Failed to load culling gallery: ' + err + '</p>';
+    }
   }
 }
 

@@ -1,4 +1,5 @@
-﻿import os
+import os
+import io
 import json
 import subprocess
 from pathlib import Path
@@ -140,7 +141,7 @@ def generate_thumbnail(file_path: str, file_id: int) -> Optional[str]:
 
     ext = Path(file_path).suffix.lower()
 
-    # 1. RAW formats (Fuji .RAF, etc.)
+    # 1. RAW formats (Fuji .RAF, Sony .ARW, Canon .CR3, etc.)
     if ext in RAW_EXTS:
         try:
             import rawpy
@@ -148,13 +149,16 @@ def generate_thumbnail(file_path: str, file_id: int) -> Optional[str]:
                 try:
                     thumb = raw.extract_thumb()
                     if thumb.format == rawpy.ThumbFormat.JPEG:
-                        with open(thumb_path, "wb") as f:
-                            f.write(thumb.data)
+                        # Downscale embedded high-res preview to true lightweight thumbnail
+                        with Image.open(io.BytesIO(thumb.data)) as img:
+                            img = img.convert("RGB")
+                            img.thumbnail((380, 380), Image.Resampling.BILINEAR)
+                            img.save(thumb_path, "JPEG", quality=80, optimize=True)
                         return str(thumb_path)
                     elif thumb.format == rawpy.ThumbFormat.BITMAP:
                         img = Image.fromarray(thumb.data)
-                        img.thumbnail((512, 512))
-                        img.save(thumb_path, "JPEG", quality=85)
+                        img.thumbnail((380, 380), Image.Resampling.BILINEAR)
+                        img.save(thumb_path, "JPEG", quality=80, optimize=True)
                         return str(thumb_path)
                 except Exception:
                     pass
@@ -166,8 +170,8 @@ def generate_thumbnail(file_path: str, file_id: int) -> Optional[str]:
         try:
             with Image.open(file_path) as img:
                 img = img.convert("RGB")
-                img.thumbnail((512, 512))
-                img.save(thumb_path, "JPEG", quality=85)
+                img.thumbnail((380, 380), Image.Resampling.BILINEAR)
+                img.save(thumb_path, "JPEG", quality=80, optimize=True)
                 return str(thumb_path)
         except Exception:
             pass
@@ -179,8 +183,8 @@ def generate_thumbnail(file_path: str, file_id: int) -> Optional[str]:
             "-ss", "00:00:01",
             "-i", file_path,
             "-vframes", "1",
-            "-vf", "scale='min(512,iw)':-1",
-            "-q:v", "3",
+            "-vf", "scale='min(380,iw)':-1",
+            "-q:v", "4",
             "-y",
             str(thumb_path)
         ]

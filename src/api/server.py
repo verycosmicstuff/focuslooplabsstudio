@@ -198,7 +198,7 @@ def get_stats():
 # ----------------- CULLING & BLUR -----------------
 
 @app.get("/api/culling")
-def get_culling_items(threshold: float = 25.0, source_id: Optional[int] = None, burst_only: bool = False, limit: int = 200):
+def get_culling_items(threshold: float = 25.0, source_id: Optional[int] = None, burst_only: bool = False, limit: int = 80, offset: int = 0):
     conn = get_db()
     cursor = conn.cursor()
 
@@ -219,8 +219,8 @@ def get_culling_items(threshold: float = 25.0, source_id: Optional[int] = None, 
     if burst_only:
         query += " AND c.burst_group IS NOT NULL"
 
-    query += " ORDER BY c.blur_score ASC LIMIT ?"
-    params.append(limit)
+    query += " ORDER BY c.blur_score ASC LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
 
     cursor.execute(query, params)
     items = [dict(r) for r in cursor.fetchall()]
@@ -464,8 +464,17 @@ def execute_organize(rule: OrganizeRule):
 
 # ----------------- THUMBNAILS & STREAMING -----------------
 
+THUMB_CACHE_HEADERS = {
+    "Cache-Control": "public, max-age=31536000, immutable"
+}
+
 @app.get("/api/thumbnail/{file_id}")
 def get_thumbnail(file_id: int):
+    # Ultra-fast path: return cached thumbnail directly from disk without SQLite lock
+    cached_thumb = THUMBNAILS_DIR / f"{file_id}.jpg"
+    if cached_thumb.is_file():
+        return FileResponse(str(cached_thumb), media_type="image/jpeg", headers=THUMB_CACHE_HEADERS)
+
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT abs_path FROM files WHERE id = ?", (file_id,))
@@ -475,12 +484,12 @@ def get_thumbnail(file_id: int):
 
     thumb = generate_thumbnail(row["abs_path"], file_id)
     if thumb and os.path.isfile(thumb):
-        return FileResponse(thumb, media_type="image/jpeg")
+        return FileResponse(thumb, media_type="image/jpeg", headers=THUMB_CACHE_HEADERS)
     
     # Fallback to direct file if standard image
     ext = Path(row["abs_path"]).suffix.lower()
-    if ext in PHOTO_EXTS:
-        return FileResponse(row["abs_path"])
+    if ext in PHOTO_EXTS and os.path.isfile(row["abs_path"]):
+        return FileResponse(row["abs_path"], headers=THUMB_CACHE_HEADERS)
 
     raise HTTPException(status_code=404, detail="Thumbnail unavailable")
 

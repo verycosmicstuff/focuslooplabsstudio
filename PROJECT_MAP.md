@@ -22,6 +22,7 @@
 - Added folder location display and native Windows File Explorer right-click integration.
 - Added intelligent video bitrate & suitability analyzer (`video_advisor.py`) and zero-bloat engine safeguard that discards output if larger than original.
 - Fixed duplicate finder: strictly excluded sidecars (.xmp) and non-media from duplicate detection, added Exact Same Filename filter, and prevented auto-checking files with different names.
+- Resolved slow image scrolling: downscaled RAW previews from 4.5MB/40MP to lightweight 380px thumbnails (~12KB, freeing 12.2GB disk space), added zero-SQL fast path with HTTP Cache-Control headers, decoding="async", and content-visibility: auto.
 
 ## Active Objective
 - Assist user with media library management, batch transcoding, and storage reclamation.

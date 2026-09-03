@@ -377,6 +377,7 @@ body {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 16px;
+  contain: layout;
 }
 
 .media-card {
@@ -387,6 +388,10 @@ body {
   position: relative;
   transition: transform 0.15s, border-color 0.15s;
   cursor: pointer;
+  content-visibility: auto;
+  contain-intrinsic-size: 200px 220px;
+  contain: layout paint style;
+  transform: translateZ(0);
 }
 
 .media-card:hover {
@@ -407,12 +412,15 @@ body {
   justify-content: center;
   position: relative;
   overflow: hidden;
+  contain: strict;
 }
 
 .media-thumb {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 .blur-badge {
@@ -423,16 +431,16 @@ body {
   border-radius: 4px;
   font-size: 11px;
   font-weight: 700;
-  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 .blur-badge.blurry {
-  background: rgba(244, 63, 94, 0.85);
+  background: rgba(225, 29, 72, 0.95);
   color: #fff;
 }
 
 .blur-badge.sharp {
-  background: rgba(16, 185, 129, 0.85);
+  background: rgba(5, 150, 105, 0.95);
   color: #fff;
 }
 
@@ -443,6 +451,11 @@ body {
   padding: 3px 8px;
   border-radius: 4px;
   font-size: 11px;
+  font-weight: 700;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(15, 23, 42, 0.85);
+  color: #fff;
+}
   font-weight: 700;
   background: rgba(139, 92, 246, 0.85);
   color: #fff;
