@@ -15,6 +15,7 @@
 - `src/organizer/manager.py`: Safe file operations (move, archive, delete to trash, dedupe, sync tracking between backup and sources).
 - `src/api/server.py`: FastAPI server serving endpoints & interactive dashboard UI.
 - `src/gui/app_window.py`: Standalone desktop window shell using WebView2.
+- `TECH_DOCUMENTATION.md`: Complete living technical specification, ER diagram, algorithms, and API catalog.
 
 ## Recent Changes
 - Built full standalone desktop software with PyWebView, SQLite catalog, OpenCV blur culling, duplicate finder, NVENC H.265 transcoder, and 1-click launcher `run_savespace.bat`.

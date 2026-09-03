@@ -3,6 +3,8 @@
 
 SaveSpace is a high-performance, standalone desktop application built to crawl, catalog, and reclaim storage across internal drives, high-speed working SSDs, and external NAS archives. It pairs hardware-accelerated video transcoding with computer vision blur culling, exact duplicate detection, and intelligent anti-bloat safeguards.
 
+📖 **For deep architectural specs, database schemas, and mathematical models, see [TECH_DOCUMENTATION.md](TECH_DOCUMENTATION.md).**
+
 ---
 
 ## ✨ Key Features
