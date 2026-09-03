@@ -1,10 +1,15 @@
-﻿from pydantic import BaseModel
+from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 
 class SourceCreate(BaseModel):
     path: str
     label: str
     drive_type: Optional[str] = "LOCAL"
+    excluded_paths: Optional[List[str]] = []
+
+class SourceExclusionsUpdate(BaseModel):
+    excluded_paths: List[str]
+    purge_indexed: Optional[bool] = True
 
 class SourceResponse(BaseModel):
     id: int
@@ -14,6 +19,7 @@ class SourceResponse(BaseModel):
     total_bytes: int
     free_bytes: int
     is_online: bool
+    excluded_paths: Optional[List[str]] = []
     last_scanned: Optional[str] = None
     file_count: Optional[int] = 0
     total_media_size: Optional[int] = 0

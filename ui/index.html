@@ -429,6 +429,16 @@
               <button id="btn-browse-source" class="btn btn-secondary btn-sm" type="button">📁 Browse...</button>
             </div>
           </div>
+          <div id="add-source-subfolder-section" style="display:none; background:rgba(0,0,0,0.25); border:1px solid var(--border-color); border-radius:6px; padding:10px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <label style="font-size:12px; font-weight:600; color:var(--accent-cyan);">Deselect Subfolders to Skip (Optional):</label>
+              <div style="display:flex; gap:4px;">
+                <button id="btn-add-subfolder-all" type="button" class="btn btn-secondary btn-sm" style="padding:1px 6px; font-size:10px;">All</button>
+                <button id="btn-add-subfolder-none" type="button" class="btn btn-secondary btn-sm" style="padding:1px 6px; font-size:10px;">None</button>
+              </div>
+            </div>
+            <div id="add-source-subfolder-list" style="max-height:140px; overflow-y:auto; font-size:12px;"></div>
+          </div>
           <div>
             <label style="font-size:13px; color:var(--text-muted); display:block; margin-bottom:6px;">Friendly Label</label>
             <input type="text" id="modal-source-label" placeholder="e.g. Fast SSD Work or NAS Archive" style="width:100%; background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:8px 12px; border-radius:6px; font-size:13px;">
@@ -447,6 +457,45 @@
       <div class="modal-footer">
         <button class="btn btn-secondary modal-close">Cancel</button>
         <button id="modal-btn-save-source" class="btn btn-primary">Save & Register</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Manage Subfolders Modal -->
+  <div id="modal-manage-subfolders" class="modal-overlay">
+    <div class="modal-dialog" style="max-width: 580px;">
+      <div class="modal-header">
+        <h3 style="font-size: 16px;">📁 Manage Subfolders: <span id="subfolder-modal-title" style="color:var(--accent-cyan);"></span></h3>
+        <button class="btn btn-secondary btn-sm modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:12px; color:var(--text-muted); margin-bottom:12px;">
+          Uncheck / deselect any subfolders you do <strong>NOT</strong> want scanned or indexed. Deselected folders are completely skipped during scanning.
+        </p>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; gap:8px;">
+          <input type="text" id="txt-subfolder-filter" placeholder="Filter subfolders..." style="flex:1; background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:6px 10px; border-radius:6px; font-size:12px;">
+          <div style="display:flex; gap:6px;">
+            <button id="btn-subfolder-select-all" type="button" class="btn btn-secondary btn-sm" style="font-size:11px;">Select All</button>
+            <button id="btn-subfolder-deselect-all" type="button" class="btn btn-secondary btn-sm" style="font-size:11px;">Deselect All</button>
+          </div>
+        </div>
+
+        <div id="subfolder-list-container" style="max-height: 280px; overflow-y: auto; background: rgba(0,0,0,0.35); border: 1px solid var(--border-color); border-radius: 8px; padding: 8px;">
+          <!-- Populated dynamically with checkboxes -->
+        </div>
+
+        <div style="margin-top:12px;">
+          <label style="font-size:12px; color:var(--text-main); display:flex; align-items:center; gap:8px; cursor:pointer;">
+            <input type="checkbox" id="chk-purge-deselected" checked>
+            <span>Purge already-indexed files from deselected folders</span>
+          </label>
+          <div style="font-size:11px; color:var(--text-muted); margin-left:22px;">Instantly removes files in unchecked folders from Culler, Transcoder, and Catalog.</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary modal-close">Cancel</button>
+        <button id="btn-save-subfolder-exclusions" class="btn btn-primary">Save & Apply Exclusions</button>
       </div>
     </div>
   </div>

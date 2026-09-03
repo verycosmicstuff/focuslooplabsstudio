@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import xxhash
 import hashlib
@@ -82,11 +83,43 @@ class SourceIndexer:
         discovered_paths = set()
         batch_files = []
         batch_meta = []
-        start_time = time.time()
+        # Load excluded subfolders for this source
+        cursor.execute("SELECT excluded_paths FROM sources WHERE id = ?", (self.source_id,))
+        s_row = cursor.fetchone()
+        excluded_raw = s_row["excluded_paths"] if s_row and s_row["excluded_paths"] else "[]"
+        try:
+            excluded_list = json.loads(excluded_raw)
+        except Exception:
+            excluded_list = []
+
+        excluded_paths_norm = set()
+        for ep in excluded_list:
+            if not ep:
+                continue
+            ep_str = str(Path(ep).resolve()).lower() if os.path.isabs(ep) else str((self.root_path / ep).resolve()).lower()
+            excluded_paths_norm.add(ep_str)
+
+        system_skips = {"$recycle.bin", "system volume information", ".git", ".idea", ".vscode", "node_modules", ".gemini"}
 
         for root, dirs, files in os.walk(str(self.root_path)):
             if not self.is_running:
                 break
+
+            # In-place directory filtering: prune excluded or system subfolders so os.walk skips them entirely
+            kept_dirs = []
+            for d in dirs:
+                d_lower = d.lower()
+                if d_lower in system_skips:
+                    continue
+                dir_abs = str((Path(root) / d).resolve()).lower()
+                is_excluded = False
+                for ex in excluded_paths_norm:
+                    if dir_abs == ex or dir_abs.startswith(ex + os.sep):
+                        is_excluded = True
+                        break
+                if not is_excluded:
+                    kept_dirs.append(d)
+            dirs[:] = kept_dirs
 
             for fname in files:
                 if not self.is_running:

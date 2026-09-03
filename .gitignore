@@ -34,3 +34,4 @@ $RECYCLE.BIN/
 # Logs & temp files
 *.log
 scratch/
+master_dashboard.*

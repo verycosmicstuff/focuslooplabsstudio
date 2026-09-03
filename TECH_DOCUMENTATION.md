@@ -320,9 +320,12 @@ Photo galleries with high-resolution mirrorless RAW files (Fuji 40MP, Sony 61MP)
 ## 6. REST API Endpoint Reference
 
 ### 6.1 Sources & Scanner
-- `GET /api/sources`: Returns all configured drive roots, drive types, total/free bytes, and scan timestamps.
-- `POST /api/sources`: Registers a new folder or drive root. Body: `{ "path": str, "label": str, "drive_type": str }`.
-- `POST /api/sources/{id}/scan`: Triggers background crawl, fast hashing, and EXIF/video probe extraction.
+- `GET /api/sources`: Returns all configured drive roots, drive types, total/free bytes, excluded subfolder arrays, and scan timestamps.
+- `POST /api/sources`: Registers a new folder or drive root. Body: `{ "path": str, "label": str, "drive_type": str, "excluded_paths": Optional[List[str]] }`.
+- `GET /api/sources/{id}/subfolders`: Lists immediate subdirectories in the drive root, indicating whether each folder is currently included or deselected/excluded.
+- `POST /api/sources/{id}/exclusions`: Persists deselected subfolder exclusions. Body: `{ "excluded_paths": List[str], "purge_indexed": bool }`. When `purge_indexed` is true, automatically deletes indexed records for files under those folders.
+- `POST /api/utils/list_subfolders`: Dynamically inspects subdirectories for an unverified path before source registration.
+- `POST /api/sources/{id}/scan`: Triggers background crawl with in-place `os.walk` directory pruning, fast xxHash sampling, and EXIF/video probe extraction.
 
 ### 6.2 Culler & Blur Quality
 - `GET /api/culling/blurry`: Returns photos with `blur_score <= max_score` and `is_blurry = 1`.

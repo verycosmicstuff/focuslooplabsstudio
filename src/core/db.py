@@ -46,6 +46,7 @@ def init_db():
         total_bytes INTEGER DEFAULT 0,
         free_bytes INTEGER DEFAULT 0,
         is_online BOOLEAN DEFAULT 1,
+        excluded_paths TEXT DEFAULT '[]', -- JSON list of excluded/deselected subfolders
         last_scanned TIMESTAMP
     );
 
@@ -136,6 +137,13 @@ def init_db():
 
     CREATE INDEX IF NOT EXISTS idx_sync_hash ON sync_records(fast_hash);
     """)
+
+    # Column migration: ensure excluded_paths exists in sources
+    cursor.execute("PRAGMA table_info(sources)")
+    cols = [r["name"] for r in cursor.fetchall()]
+    if "excluded_paths" not in cols:
+        cursor.execute("ALTER TABLE sources ADD COLUMN excluded_paths TEXT DEFAULT '[]'")
+
     conn.commit()
 
 init_db()

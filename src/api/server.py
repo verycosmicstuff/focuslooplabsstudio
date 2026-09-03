@@ -15,8 +15,8 @@ from src.config import (
     BASE_DIR, THUMBNAILS_DIR, PERFORMANCE_MODES, DEFAULT_PORT, DEFAULT_HOST,
     RAW_EXTS, PHOTO_EXTS, VIDEO_EXTS
 )
-from src.core.db import get_db, init_db
-from src.core.models import SourceCreate, CullingAction, TranscodeRequest, OrganizeRule
+from src.core.db import get_db, init_db, db_transaction
+from src.core.models import SourceCreate, SourceExclusionsUpdate, CullingAction, TranscodeRequest, OrganizeRule
 from src.scanner.indexer import SourceIndexer
 from src.scanner.meta_extractor import generate_thumbnail
 from src.analyzer.culler import CullingEngine, compute_blur_score
@@ -62,6 +62,11 @@ def list_sources():
     sources = [dict(r) for r in cursor.fetchall()]
 
     for s in sources:
+        try:
+            s["excluded_paths"] = json.loads(s.get("excluded_paths") or "[]")
+        except Exception:
+            s["excluded_paths"] = []
+
         # Get live capacity if possible
         try:
             p = Path(s["path"])
@@ -104,13 +109,128 @@ def add_source(data: SourceCreate):
 
     try:
         cursor.execute("""
-            INSERT INTO sources (path, label, drive_type, total_bytes, free_bytes, is_online)
-            VALUES (?, ?, ?, ?, ?, 1)
-        """, (str(p), data.label, data.drive_type or "LOCAL", total_b, free_b))
+            INSERT INTO sources (path, label, drive_type, total_bytes, free_bytes, is_online, excluded_paths)
+            VALUES (?, ?, ?, ?, ?, 1, ?)
+        """, (str(p), data.label, data.drive_type or "LOCAL", total_b, free_b, json.dumps(data.excluded_paths or [])))
         conn.commit()
         return {"id": cursor.lastrowid, "message": "Source registered successfully"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Source already registered or invalid: {str(e)}")
+
+@app.get("/api/sources/{source_id}/subfolders")
+def get_source_subfolders(source_id: int):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, path, label, excluded_paths FROM sources WHERE id = ?", (source_id,))
+    row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    root = Path(row["path"])
+    if not root.exists():
+        return {"source_id": source_id, "path": row["path"], "is_online": False, "subfolders": []}
+
+    try:
+        excluded_list = json.loads(row["excluded_paths"] or "[]")
+    except Exception:
+        excluded_list = []
+
+    norm_excluded = {
+        str(Path(p).resolve()).lower() if os.path.isabs(p) else str((root / p).resolve()).lower()
+        for p in excluded_list if p
+    }
+
+    system_skips = {"$recycle.bin", "system volume information", ".git", ".idea", ".vscode", "node_modules", ".gemini"}
+    subfolders = []
+
+    try:
+        with os.scandir(str(root)) as it:
+            for entry in sorted(it, key=lambda e: e.name.lower()):
+                if entry.is_dir(follow_symlinks=False):
+                    name = entry.name
+                    if name.lower() in system_skips:
+                        continue
+                    full_p = str(Path(entry.path).resolve())
+                    is_excluded = (full_p.lower() in norm_excluded or name.lower() in norm_excluded or name in excluded_list)
+                    subfolders.append({
+                        "name": name,
+                        "path": full_p,
+                        "rel_path": name,
+                        "is_excluded": is_excluded
+                    })
+    except Exception as e:
+        pass
+
+    return {
+        "source_id": source_id,
+        "path": str(root),
+        "label": row["label"],
+        "is_online": True,
+        "subfolders": subfolders
+    }
+
+@app.post("/api/sources/{source_id}/exclusions")
+def update_source_exclusions(source_id: int, data: SourceExclusionsUpdate):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, path FROM sources WHERE id = ?", (source_id,))
+    row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    root = Path(row["path"])
+    clean_exclusions = list(set(data.excluded_paths))
+
+    with db_transaction() as tx:
+        tx.execute(
+            "UPDATE sources SET excluded_paths = ? WHERE id = ?",
+            (json.dumps(clean_exclusions), source_id)
+        )
+
+        purged_count = 0
+        if data.purge_indexed:
+            for ep in clean_exclusions:
+                abs_prefix = str(Path(ep).resolve()) if os.path.isabs(ep) else str((root / ep).resolve())
+                cur = tx.cursor()
+                cur.execute(
+                    "DELETE FROM files WHERE source_id = ? AND (abs_path = ? OR abs_path LIKE ?)",
+                    (source_id, abs_prefix, abs_prefix + "\\%")
+                )
+                purged_count += cur.rowcount
+
+    return {
+        "source_id": source_id,
+        "excluded_count": len(clean_exclusions),
+        "purged_files_count": purged_count,
+        "message": f"Updated exclusions ({len(clean_exclusions)} folders deselected, {purged_count} files removed from catalog)."
+    }
+
+@app.post("/api/utils/list_subfolders")
+def list_directory_subfolders(payload: Dict[str, Any]):
+    target_path = payload.get("path", "").strip()
+    if not target_path:
+        return {"subfolders": []}
+
+    p = Path(target_path).resolve()
+    if not p.exists() or not p.is_dir():
+        return {"subfolders": []}
+
+    system_skips = {"$recycle.bin", "system volume information", ".git", ".idea", ".vscode", "node_modules", ".gemini"}
+    subfolders = []
+    try:
+        with os.scandir(str(p)) as it:
+            for entry in sorted(it, key=lambda e: e.name.lower()):
+                if entry.is_dir(follow_symlinks=False):
+                    if entry.name.lower() in system_skips:
+                        continue
+                    subfolders.append({
+                        "name": entry.name,
+                        "path": str(Path(entry.path).resolve()),
+                        "rel_path": entry.name
+                    })
+    except Exception:
+        pass
+    return {"subfolders": subfolders}
 
 @app.delete("/api/sources/{source_id}")
 def delete_source(source_id: int):

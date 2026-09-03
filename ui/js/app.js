@@ -318,19 +318,101 @@ async function loadSources() {
     sourcesData.forEach(s => {
       const tr = document.createElement('tr');
       const onlineTag = s.is_online ? '<span style="color:var(--accent-emerald);">● Online</span>' : '<span style="color:var(--accent-rose);">○ Offline</span>';
+      const excludedCount = (s.excluded_paths && s.excluded_paths.length) || 0;
+      const excludedBadge = excludedCount > 0 
+        ? ' <span class="brand-badge" style="background:rgba(245,158,11,0.2); color:var(--accent-amber); font-size:11px; cursor:pointer;" onclick="openSubfoldersModal(' + s.id + ')" title="' + excludedCount + ' subfolders deselected">' + excludedCount + ' deselected</span>'
+        : '';
+
       tr.innerHTML = '<td style="font-weight:600;">' + s.label + '</td>'
-        + '<td style="font-family:monospace; font-size:12px;">' + s.path + '</td>'
+        + '<td style="font-family:monospace; font-size:12px;">' + s.path + excludedBadge + '</td>'
         + '<td><span class="brand-badge">' + s.drive_type + '</span></td>'
         + '<td>' + onlineTag + '</td>'
         + '<td>' + (s.file_count || 0).toLocaleString() + '</td>'
         + '<td>' + formatBytes(s.total_media_size || 0) + '</td>'
         + '<td style="font-size:11px; color:var(--text-muted);">' + (s.last_scanned ? s.last_scanned.split('T')[0] : 'Never') + '</td>'
-        + '<td><button class="btn btn-primary btn-sm" onclick="scanSource(' + s.id + ')">Scan Now</button> <button class="btn btn-secondary btn-sm" onclick="deleteSource(' + s.id + ')">Remove</button></td>';
+        + '<td style="white-space:nowrap;">'
+        + '<button class="btn btn-secondary btn-sm" onclick="openSubfoldersModal(' + s.id + ')" style="margin-right:4px;">📁 Folders' + (excludedCount > 0 ? ' (' + excludedCount + ')' : '') + '</button>'
+        + '<button class="btn btn-primary btn-sm" onclick="scanSource(' + s.id + ')" style="margin-right:4px;">Scan Now</button>'
+        + '<button class="btn btn-secondary btn-sm" onclick="deleteSource(' + s.id + ')">Remove</button>'
+        + '</td>';
       tbody.appendChild(tr);
     });
   } catch (err) {
     console.error('Failed to load sources:', err);
   }
+}
+
+let currentSubfolders = [];
+let currentSubfolderSourceId = null;
+
+window.openSubfoldersModal = async function(sourceId) {
+  currentSubfolderSourceId = sourceId;
+  const modal = document.getElementById('modal-manage-subfolders');
+  const container = document.getElementById('subfolder-list-container');
+  const titleSpan = document.getElementById('subfolder-modal-title');
+  const txtFilter = document.getElementById('txt-subfolder-filter');
+  if (txtFilter) txtFilter.value = '';
+
+  container.innerHTML = '<p style="color:var(--text-muted); padding:16px;">Reading drive subfolders...</p>';
+  modal.classList.add('active');
+
+  try {
+    const res = await fetch(API_BASE + '/api/sources/' + sourceId + '/subfolders');
+    const data = await res.json();
+    currentSubfolders = data.subfolders || [];
+    titleSpan.textContent = (data.label || 'Drive') + ' (' + data.path + ')';
+
+    renderSubfolderList(currentSubfolders);
+  } catch (err) {
+    container.innerHTML = '<p style="color:var(--accent-rose); padding:16px;">Failed to read subfolders: ' + err + '</p>';
+  }
+};
+
+function renderSubfolderList(subfolders) {
+  const container = document.getElementById('subfolder-list-container');
+  container.innerHTML = '';
+
+  if (subfolders.length === 0) {
+    container.innerHTML = '<p style="color:var(--text-muted); padding:16px;">No subfolders found in this drive root.</p>';
+    return;
+  }
+
+  subfolders.forEach(sub => {
+    const row = document.createElement('div');
+    row.className = 'subfolder-item-row';
+    row.dataset.name = sub.name.toLowerCase();
+    row.style.display = 'flex';
+    row.style.alignItems = 'center';
+    row.style.justifyContent = 'space-between';
+    row.style.padding = '8px 10px';
+    row.style.borderBottom = '1px solid rgba(255,255,255,0.05)';
+
+    const isChecked = !sub.is_excluded;
+
+    row.innerHTML = '<label style="display:flex; align-items:center; gap:10px; cursor:pointer; flex:1; font-size:13px; font-weight:500;">'
+      + '<input type="checkbox" class="chk-subfolder" data-path="' + sub.rel_path + '" ' + (isChecked ? 'checked' : '') + ' style="cursor:pointer; width:16px; height:16px;">'
+      + '<span>📁 ' + sub.name + '</span>'
+      + '</label>'
+      + '<span class="subfolder-status-badge ' + (isChecked ? 'badge-included' : 'badge-excluded') + '" style="font-size:11px; padding:2px 8px; border-radius:4px; font-weight:600;">'
+      + (isChecked ? '✓ Included' : '✕ Deselected (Skip)')
+      + '</span>';
+
+    const chk = row.querySelector('.chk-subfolder');
+    const badge = row.querySelector('.subfolder-status-badge');
+
+    chk.addEventListener('change', () => {
+      sub.is_excluded = !chk.checked;
+      if (chk.checked) {
+        badge.textContent = '✓ Included';
+        badge.className = 'subfolder-status-badge badge-included';
+      } else {
+        badge.textContent = '✕ Deselected (Skip)';
+        badge.className = 'subfolder-status-badge badge-excluded';
+      }
+    });
+
+    container.appendChild(row);
+  });
 }
 
 window.scanSource = async function(id) {
@@ -1323,12 +1405,143 @@ document.getElementById('btn-org-execute').addEventListener('click', async () =>
 const modalAddSource = document.getElementById('modal-add-source');
 document.getElementById('btn-add-source-modal').addEventListener('click', () => {
   modalAddSource.classList.add('active');
+  const sec = document.getElementById('add-source-subfolder-section');
+  if (sec) sec.style.display = 'none';
 });
+
+// Universal modal close handler
 document.querySelectorAll('.modal-close').forEach(b => {
-  b.addEventListener('click', () => {
-    modalAddSource.classList.remove('active');
+  b.addEventListener('click', (e) => {
+    const modal = e.target.closest('.modal-overlay');
+    if (modal) modal.classList.remove('active');
   });
 });
+
+// Manage Subfolders Modal Controls
+const txtSubFilter = document.getElementById('txt-subfolder-filter');
+if (txtSubFilter) {
+  txtSubFilter.addEventListener('input', (e) => {
+    const q = e.target.value.toLowerCase().trim();
+    document.querySelectorAll('#subfolder-list-container .subfolder-item-row').forEach(row => {
+      row.style.display = row.dataset.name.includes(q) ? 'flex' : 'none';
+    });
+  });
+}
+
+const btnSubSelectAll = document.getElementById('btn-subfolder-select-all');
+if (btnSubSelectAll) {
+  btnSubSelectAll.addEventListener('click', () => {
+    document.querySelectorAll('#subfolder-list-container .chk-subfolder').forEach(chk => {
+      chk.checked = true;
+      chk.dispatchEvent(new Event('change'));
+    });
+  });
+}
+
+const btnSubDeselectAll = document.getElementById('btn-subfolder-deselect-all');
+if (btnSubDeselectAll) {
+  btnSubDeselectAll.addEventListener('click', () => {
+    document.querySelectorAll('#subfolder-list-container .chk-subfolder').forEach(chk => {
+      chk.checked = false;
+      chk.dispatchEvent(new Event('change'));
+    });
+  });
+}
+
+const btnSaveSubExclusions = document.getElementById('btn-save-subfolder-exclusions');
+if (btnSaveSubExclusions) {
+  btnSaveSubExclusions.addEventListener('click', async () => {
+    if (!currentSubfolderSourceId) return;
+
+    // Any unchecked box is an excluded path
+    const excluded = [];
+    document.querySelectorAll('#subfolder-list-container .chk-subfolder').forEach(chk => {
+      if (!chk.checked) {
+        excluded.push(chk.dataset.path);
+      }
+    });
+
+    const purge = document.getElementById('chk-purge-deselected').checked;
+    btnSaveSubExclusions.disabled = true;
+    btnSaveSubExclusions.textContent = 'Saving & Applying...';
+
+    try {
+      const res = await fetch(API_BASE + '/api/sources/' + currentSubfolderSourceId + '/exclusions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ excluded_paths: excluded, purge_indexed: purge })
+      });
+      const result = await res.json();
+      alert(result.message || 'Exclusions saved successfully!');
+      document.getElementById('modal-manage-subfolders').classList.remove('active');
+      loadSources();
+      loadOverview();
+    } catch (err) {
+      alert('Failed to save exclusions: ' + err);
+    } finally {
+      btnSaveSubExclusions.disabled = false;
+      btnSaveSubExclusions.textContent = 'Save & Apply Exclusions';
+    }
+  });
+}
+
+// Check subfolders for new source registration
+async function checkNewSourceSubfolders(dirPath) {
+  const sec = document.getElementById('add-source-subfolder-section');
+  const list = document.getElementById('add-source-subfolder-list');
+  if (!dirPath || dirPath.length < 2) {
+    if (sec) sec.style.display = 'none';
+    return;
+  }
+  try {
+    const res = await fetch(API_BASE + '/api/utils/list_subfolders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: dirPath })
+    });
+    const data = await res.json();
+    const subs = data.subfolders || [];
+    if (subs.length > 0) {
+      sec.style.display = 'block';
+      list.innerHTML = '';
+      subs.forEach(s => {
+        const label = document.createElement('label');
+        label.style.display = 'flex';
+        label.style.alignItems = 'center';
+        label.style.gap = '8px';
+        label.style.padding = '4px 0';
+        label.style.cursor = 'pointer';
+        label.innerHTML = '<input type="checkbox" class="chk-add-sub" data-path="' + s.rel_path + '" checked> <span>📁 ' + s.name + '</span>';
+        list.appendChild(label);
+      });
+    } else {
+      sec.style.display = 'none';
+    }
+  } catch (e) {
+    if (sec) sec.style.display = 'none';
+  }
+}
+
+const inputSourcePath = document.getElementById('modal-source-path');
+if (inputSourcePath) {
+  inputSourcePath.addEventListener('change', () => {
+    checkNewSourceSubfolders(inputSourcePath.value.trim());
+  });
+}
+
+const btnAddSubAll = document.getElementById('btn-add-subfolder-all');
+if (btnAddSubAll) {
+  btnAddSubAll.addEventListener('click', () => {
+    document.querySelectorAll('#add-source-subfolder-list .chk-add-sub').forEach(c => c.checked = true);
+  });
+}
+
+const btnAddSubNone = document.getElementById('btn-add-subfolder-none');
+if (btnAddSubNone) {
+  btnAddSubNone.addEventListener('click', () => {
+    document.querySelectorAll('#add-source-subfolder-list .chk-add-sub').forEach(c => c.checked = false);
+  });
+}
 
 document.getElementById('modal-btn-save-source').addEventListener('click', async () => {
   const path = document.getElementById('modal-source-path').value.trim();
@@ -1340,14 +1553,23 @@ document.getElementById('modal-btn-save-source').addEventListener('click', async
     return;
   }
 
+  // Collect any deselected subfolders
+  const excluded = [];
+  document.querySelectorAll('#add-source-subfolder-list .chk-add-sub').forEach(chk => {
+    if (!chk.checked) {
+      excluded.push(chk.dataset.path);
+    }
+  });
+
   try {
     await fetch(API_BASE + '/api/sources', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: path, label: label, drive_type: type })
+      body: JSON.stringify({ path: path, label: label, drive_type: type, excluded_paths: excluded })
     });
     modalAddSource.classList.remove('active');
     loadOverview();
+    loadSources();
   } catch (e) {
     alert('Failed to add source: ' + e);
   }
@@ -1365,6 +1587,7 @@ if (btnBrowseSource) {
         if (!document.getElementById('modal-source-label').value.trim()) {
           document.getElementById('modal-source-label').value = data.label;
         }
+        checkNewSourceSubfolders(data.path);
       }
     } catch (e) {
       console.error('Folder picker error:', e);
