@@ -1,0 +1,36 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local user data, SQLite database, and media caches
+data/
+*.db
+*.db-shm
+*.db-wal
+thumbnails/
+quarantine/
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE & Local Project Tooling
+.idea/
+.vscode/
+*.swp
+aggregator_config.json
+
+# Operating System Files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# Logs & temp files
+*.log
+scratch/

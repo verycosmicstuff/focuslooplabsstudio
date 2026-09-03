@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SaveSpace — Media Storage & Transcoder</title>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-icon">S</div>
+      <div>
+        <div class="brand-title">SaveSpace</div>
+        <div class="brand-badge">PRO DESKTOP</div>
+      </div>
+    </div>
+
+    <nav class="nav-menu">
+      <div class="nav-item active" data-tab="overview">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
+        Overview
+      </div>
+      <div class="nav-item" data-tab="sources">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/></svg>
+        Drives & Sources
+      </div>
+      <div class="nav-item" data-tab="culler">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" x2="12" y1="2" y2="5"/><line x1="12" x2="12" y1="19" y2="22"/><line x1="2" x2="5" y1="12" y2="12"/><line x1="19" x2="22" y1="12" y2="12"/></svg>
+        Blur & Burst Culler
+      </div>
+      <div class="nav-item" data-tab="duplicates">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+        Duplicates Finder
+      </div>
+      <div class="nav-item" data-tab="transcoder">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        H.265 GPU Transcoder
+      </div>
+      <div class="nav-item" data-tab="sync">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/><path d="M2.5 22v-6h6M2.66 8.43a10 10 0 0 0 .57 8.38L-2.44 22"/></svg>
+        SSD & NAS Sync
+      </div>
+      <div class="nav-item" data-tab="organizer">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+        Smart Organizer
+      </div>
+    </nav>
+
+    <!-- Throttling & Priority Box -->
+    <div class="sidebar-footer">
+      <div class="perf-mode-card">
+        <div class="perf-header">
+          <span>GPU/CPU Throttling</span>
+          <span id="cur-perf-badge" style="color:var(--accent-cyan)">BALANCED</span>
+        </div>
+        <div class="perf-selector">
+          <button class="perf-btn" data-mode="stealth" title="Lowest OS priority (Idle), 2 threads, laptop stays cold">Eco</button>
+          <button class="perf-btn active" data-mode="balanced" title="Below-normal priority with NVENC GPU">Normal</button>
+          <button class="perf-btn" data-mode="turbo" title="Full speed overnight mode">Turbo</button>
+        </div>
+        <div style="margin-top: 8px; display:flex; gap:6px;">
+          <button id="btn-transcode-pause" class="btn btn-secondary btn-sm" style="flex:1;">Pause Transcodes</button>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main-wrapper">
+    <header class="top-bar">
+      <div class="page-title">
+        <span id="current-view-title">Storage Overview & Health</span>
+      </div>
+      <div class="top-actions">
+        <button id="btn-add-source-modal" class="btn btn-primary">+ Add Drive / Folder</button>
+        <button id="btn-refresh-all" class="btn btn-secondary">Refresh</button>
+      </div>
+    </header>
+
+    <div class="content-area">
+      <!-- 1. OVERVIEW TAB -->
+      <section id="tab-overview" class="tab-panel active">
+        <div class="grid-stats">
+          <div class="stat-card cyan">
+            <div class="stat-label">Total Indexed Storage</div>
+            <div class="stat-val" id="stat-total-size">0.0 GB</div>
+            <div class="stat-sub" id="stat-total-files">0 files indexed</div>
+          </div>
+          <div class="stat-card emerald">
+            <div class="stat-label">Total Reclaimable Space</div>
+            <div class="stat-val" id="stat-reclaimable">0.0 GB</div>
+            <div class="stat-sub">From blur, dupes & H.265</div>
+          </div>
+          <div class="stat-card rose">
+            <div class="stat-label">Blurry / Junk Photos</div>
+            <div class="stat-val" id="stat-blurry-size">0.0 GB</div>
+            <div class="stat-sub" id="stat-blurry-count">0 items flagged</div>
+          </div>
+          <div class="stat-card amber">
+            <div class="stat-label">Duplicate Media</div>
+            <div class="stat-val" id="stat-dupes-size">0.0 GB</div>
+            <div class="stat-sub">Redundant copies found</div>
+          </div>
+          <div class="stat-card purple">
+            <div class="stat-label">Video Transcode Potential</div>
+            <div class="stat-val" id="stat-transcode-size">0.0 GB</div>
+            <div class="stat-sub">Est. H.265 NVENC savings</div>
+          </div>
+        </div>
+
+        <h3 style="margin-bottom: 14px; font-size: 16px;">Drive & Volume Capacity</h3>
+        <div id="overview-drives-list" class="drives-container">
+          <!-- Populated dynamically -->
+        </div>
+      </section>
+
+      <!-- 2. SOURCES & INDEXING TAB -->
+      <section id="tab-sources" class="tab-panel">
+        <div class="toolbar">
+          <div class="toolbar-group">
+            <span style="font-size: 14px; font-weight: 600;">Registered Drives & Folders</span>
+          </div>
+          <div class="toolbar-group">
+            <button id="btn-scan-all" class="btn btn-primary">Scan All Drives</button>
+          </div>
+        </div>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Label</th>
+              <th>Drive Path</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th>Indexed Files</th>
+              <th>Media Size</th>
+              <th>Last Scanned</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="sources-table-body">
+            <!-- Dynamic rows -->
+          </tbody>
+        </table>
+      </section>
+
+      <!-- 3. BLUR & BURST CULLER TAB -->
+      <section id="tab-culler" class="tab-panel">
+        <div class="toolbar">
+          <div class="toolbar-group">
+            <label style="font-size: 13px; color:var(--text-muted)">Sharpness Threshold:</label>
+            <input type="range" id="blur-threshold-slider" min="5" max="50" value="25" style="width: 120px;">
+            <span id="blur-threshold-val" style="font-weight:700; font-size:13px;">25</span>
+          </div>
+          <div class="toolbar-group">
+            <label style="font-size: 13px; color:var(--text-muted); display:flex; align-items:center; gap:6px;">
+              <input type="checkbox" id="chk-burst-only"> Bursts Only
+            </label>
+            <button id="btn-select-all-blurry" class="btn btn-secondary btn-sm">Select All Blurry</button>
+            <button id="btn-cull-quarantine" class="btn btn-secondary btn-sm">Quarantine Selected</button>
+            <button id="btn-cull-trash" class="btn btn-danger btn-sm">Send to Recycle Bin</button>
+          </div>
+        </div>
+
+        <div id="culler-gallery" class="gallery-grid">
+          <!-- Dynamic media cards -->
+        </div>
+      </section>
+
+      <!-- 4. DUPLICATES FINDER TAB -->
+      <section id="tab-duplicates" class="tab-panel">
+        <div class="toolbar">
+          <div class="toolbar-group">
+            <label style="font-size: 13px; color:var(--text-muted); display:flex; align-items:center; gap:6px;">
+              <input type="checkbox" id="chk-same-filename" checked> Exact Same Filename Only (Safe)
+            </label>
+            <label style="font-size: 13px; color:var(--text-muted); display:flex; align-items:center; gap:6px; margin-left:14px;">
+              <input type="checkbox" id="chk-cross-source"> Cross-Drive Duplicates Only (SSD vs NAS)
+            </label>
+          </div>
+          <div class="toolbar-group">
+            <button id="btn-auto-select-redundant" class="btn btn-secondary btn-sm">Auto-Select Exact Copies</button>
+            <button id="btn-delete-selected-dupes" class="btn btn-danger btn-sm">Recycle Selected Duplicates</button>
+          </div>
+        </div>
+
+        <div id="duplicates-container">
+          <!-- Duplicates grouped by cluster -->
+        </div>
+      </section>
+
+      <!-- 5. TRANSCODER TAB -->
+      <section id="tab-transcoder" class="tab-panel">
+        <!-- Hardware & Profile Bar -->
+        <div class="toolbar">
+          <div class="toolbar-group">
+            <span style="font-size: 13px; font-weight: 600;">Hardware Engine:</span>
+            <span class="brand-badge" style="background:rgba(16,185,129,0.2); color:var(--accent-emerald)">NVIDIA RTX 3060 NVENC Active</span>
+          </div>
+          <div class="toolbar-group">
+            <label style="font-size:12px; color:var(--text-muted);">Conversion Profile:</label>
+            <select id="sel-transcode-profile" style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:6px 10px; border-radius:6px; font-size:13px;">
+              <option value="nvenc_hq_10bit">NVENC High Quality 10-Bit (Recommended for Fuji)</option>
+              <option value="nvenc_lossless">NVENC Ultra Master (CQ 18)</option>
+              <option value="nvenc_compact">NVENC Max Space Saving (CQ 26)</option>
+              <option value="cpu_x265_hq">CPU libx265 (High Efficiency)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Master Queue Monitor (Dual Progress Bars) -->
+        <div id="transcode-master-card" style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:12px; padding:18px; margin-bottom:20px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <div>
+              <span style="font-size:15px; font-weight:700;">Overall Queue Progress</span>
+              <span id="queue-counter-badge" style="margin-left:10px; font-size:12px; color:var(--text-muted);">(0 / 0 completed)</span>
+            </div>
+            <div style="display:flex; gap:10px; align-items:center;">
+              <span id="queue-savings-badge" style="font-size:13px; font-weight:700; color:var(--accent-emerald);">Saved: 0 B</span>
+              <button id="btn-start-queue" class="btn btn-primary btn-sm">▶ Start Queue</button>
+              <button id="btn-pause-queue" class="btn btn-secondary btn-sm">⏸ Pause</button>
+              <button id="btn-clear-completed-queue" class="btn btn-secondary btn-sm">Clear Finished</button>
+            </div>
+          </div>
+
+          <!-- Overall Queue Progress Bar -->
+          <div class="meter-bar" style="height:12px; margin-bottom:8px;">
+            <div id="queue-master-fill" class="meter-fill" style="width: 0%; background: linear-gradient(90deg, var(--accent-cyan), var(--accent-emerald));"></div>
+          </div>
+          <div style="display:flex; justify-content:space-between; font-size:12px; color:var(--text-muted); margin-bottom:14px;">
+            <span id="queue-status-text">Queue is idle.</span>
+            <span id="queue-progress-pct" style="font-weight:700; color:var(--text-main);">0.0%</span>
+          </div>
+
+          <!-- Active File Individual Progress Bar -->
+          <div id="active-job-box" style="background:rgba(15,23,42,0.6); border:1px solid var(--border-color); border-radius:8px; padding:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <span id="active-job-title" style="font-size:13px; font-weight:600; color:var(--accent-cyan);">Currently Transcoding: None</span>
+              <span id="active-job-pct" style="font-size:12px; font-weight:700;">0.0%</span>
+            </div>
+            <div class="meter-bar" style="height:8px; margin-bottom:6px;">
+              <div id="active-job-fill" class="meter-fill" style="width:0%;"></div>
+            </div>
+            <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-muted);">
+              <span id="active-job-metrics">Speed: 0x | FPS: 0</span>
+              <span id="active-job-saved">Projected Savings: 0 B</span>
+            </div>
+          </div>
+
+          <!-- Transcode Queue Item Breakdown -->
+          <div id="queue-details-box" style="margin-top:14px; border-top:1px solid var(--border-color); padding-top:12px; display:none;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span style="font-size:13px; font-weight:700; color:var(--text-main);">📋 Transcode Queue Items</span>
+                <span id="queue-breakdown-count" class="brand-badge" style="font-size:11px;">0 queued</span>
+              </div>
+              <span style="font-size:11px; color:var(--text-muted);">💡 Tip: Right-click any video to reveal in File Explorer</span>
+            </div>
+            <div style="max-height:190px; overflow-y:auto; border:1px solid var(--border-color); border-radius:8px; background:rgba(15,23,42,0.4);">
+              <table class="data-table" style="margin:0; font-size:12px;">
+                <thead>
+                  <tr>
+                    <th>Filename</th>
+                    <th>Folder</th>
+                    <th>Profile</th>
+                    <th>Original</th>
+                    <th>Status / Progress</th>
+                    <th style="text-align:center; width:110px;">Action</th>
+                  </tr>
+                </thead>
+                <tbody id="queue-items-body">
+                  <!-- Rendered dynamically -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Filter & Selection Toolbar for Candidates -->
+        <div class="toolbar" style="margin-bottom:12px;">
+          <div class="toolbar-group">
+            <label style="font-size:12px; color:var(--text-muted);">Source Drive:</label>
+            <select id="sel-transcode-drive" style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:5px 8px; border-radius:6px; font-size:12px;"></select>
+
+            <label style="font-size:12px; color:var(--text-muted); margin-left:6px;">Min Size:</label>
+            <select id="sel-transcode-min-size" style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:5px 8px; border-radius:6px; font-size:12px;">
+              <option value="50">> 50 MB</option>
+              <option value="100">> 100 MB</option>
+              <option value="500">> 500 MB</option>
+              <option value="1000">> 1 GB</option>
+              <option value="5000">> 5 GB</option>
+            </select>
+
+            <label style="font-size:12px; color:var(--text-muted); margin-left:6px;">Codec:</label>
+            <select id="sel-transcode-codec" style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:5px 8px; border-radius:6px; font-size:12px;">
+              <option value="">All Codecs</option>
+              <option value="h264">H.264 / AVC</option>
+              <option value="prores">Apple ProRes</option>
+              <option value="hevc">H.265 / HEVC</option>
+            </select>
+
+            <label style="font-size:12px; color:var(--text-muted); margin-left:6px;">Analysis:</label>
+            <select id="sel-transcode-suitability" style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:5px 8px; border-radius:6px; font-size:12px;">
+              <option value="recommended">Safe to Compress (Recommended)</option>
+              <option value="">All Videos (Show Everything)</option>
+              <option value="high_savings">High Savings Only (Camera Raw/4K)</option>
+              <option value="already_compact">Already Compact (Bloat Risk)</option>
+              <option value="already_hevc">Already H.265 / HEVC</option>
+            </select>
+
+            <input type="text" id="txt-transcode-search" placeholder="Search filename..." style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:5px 8px; border-radius:6px; font-size:12px; width:130px;">
+          </div>
+          <div class="toolbar-group">
+            <span id="transcode-selection-summary" style="font-size:12px; font-weight:600; color:var(--accent-cyan); margin-right:6px;">0 selected</span>
+            <button id="btn-queue-selected" class="btn btn-primary btn-sm">Queue Selected (0)</button>
+            <button id="btn-queue-all-filtered" class="btn btn-secondary btn-sm">Queue All Filtered</button>
+          </div>
+        </div>
+
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width:36px; text-align:center;"><input type="checkbox" id="chk-candidate-all"></th>
+              <th>Filename</th>
+              <th>Folder</th>
+              <th>Bitrate</th>
+              <th>Codec / Res</th>
+              <th>Original Size</th>
+              <th>Est. Savings</th>
+              <th>Efficiency / Advice</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="video-candidates-body">
+            <!-- Video candidates -->
+          </tbody>
+        </table>
+      </section>
+
+      <!-- 6. SSD & NAS SYNC TAB -->
+      <section id="tab-sync" class="tab-panel">
+        <div class="toolbar">
+          <div class="toolbar-group">
+            <label style="font-size: 13px; color:var(--text-muted)">Working SSD / Source:</label>
+            <select id="sel-sync-working" style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:6px 10px; border-radius:6px; font-size:13px;"></select>
+
+            <label style="font-size: 13px; color:var(--text-muted); margin-left:10px;">Backup Drive / NAS:</label>
+            <select id="sel-sync-backup" style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:6px 10px; border-radius:6px; font-size:13px;"></select>
+
+            <button id="btn-compare-sync" class="btn btn-secondary btn-sm" style="margin-left: 10px;">Compare Drives</button>
+          </div>
+          <div class="toolbar-group">
+            <button id="btn-reclaim-safe-ssd" class="btn btn-primary btn-sm">Reclaim Safe SSD Space</button>
+          </div>
+        </div>
+
+        <div id="sync-summary-card" class="stat-card emerald" style="display:none; margin-bottom: 20px;">
+          <div class="stat-label">Verified Safe Reclaimable Space</div>
+          <div class="stat-val" id="sync-reclaimable-size">0.0 GB</div>
+          <div class="stat-sub" id="sync-reclaimable-desc">These files exist on your backup drive with matching cryptographic hashes and are 100% safe to delete locally from SSD.</div>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <div>
+            <h4 style="margin-bottom: 10px; font-size: 14px; color:var(--accent-emerald);">Verified Synced (Safe to Free)</h4>
+            <div id="synced-safe-list" style="max-height: 400px; overflow-y: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px;">
+              <p style="color:var(--text-muted); font-size:13px;">Select drives and click Compare to analyze sync status.</p>
+            </div>
+          </div>
+          <div>
+            <h4 style="margin-bottom: 10px; font-size: 14px; color:var(--accent-rose);">Unbacked Up (Needs Copy to NAS)</h4>
+            <div id="unbacked-up-list" style="max-height: 400px; overflow-y: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px;">
+              <p style="color:var(--text-muted); font-size:13px;">Select drives and click Compare to analyze sync status.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 7. ORGANIZER TAB -->
+      <section id="tab-organizer" class="tab-panel">
+        <div class="toolbar">
+          <div class="toolbar-group">
+            <label style="font-size: 13px; color:var(--text-muted)">Source Drive:</label>
+            <select id="sel-org-source" style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:6px 10px; border-radius:6px; font-size:13px;"></select>
+
+            <label style="font-size:13px; color:var(--text-muted); margin-left:10px;">Target Folder:</label>
+            <div style="display:inline-flex; gap:6px; align-items:center;">
+              <input type="text" id="txt-org-dest" placeholder="e.g. F:\OrganizedMedia" style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:6px 10px; border-radius:6px; font-size:13px; width: 220px;">
+              <button id="btn-browse-org" class="btn btn-secondary btn-sm" type="button">📁 Browse...</button>
+            </div>
+          </div>
+          <div class="toolbar-group">
+            <button id="btn-org-preview" class="btn btn-secondary btn-sm">Preview Move (Dry-Run)</button>
+            <button id="btn-org-execute" class="btn btn-primary btn-sm">Execute Move</button>
+          </div>
+        </div>
+
+        <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; padding:16px; margin-bottom:20px;">
+          <h4 style="font-size:14px; margin-bottom:8px;">Folder Structure Pattern</h4>
+          <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
+            Supports tags: <code>{year}</code>, <code>{month}</code>, <code>{year}-{month}</code>, <code>{date}</code>, <code>{camera}</code>, <code>{filename}</code>.
+            <strong>Notice:</strong> Fuji RAW (<code>.RAF</code>) files and their <code>.xmp</code> sidecars are atomically bound and moved together!
+          </p>
+          <input type="text" id="txt-org-pattern" value="{year}/{year}-{month}/{camera}/{filename}" style="width:100%; background:var(--bg-secondary); color:#fff; border:1px solid var(--border-color); padding:8px 12px; border-radius:6px; font-size:13px;">
+        </div>
+
+        <h4 style="margin-bottom: 10px; font-size: 14px;">Organization Preview Plan</h4>
+        <div id="org-preview-container" style="max-height: 400px; overflow-y: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px;">
+          <p style="color:var(--text-muted); font-size:13px;">Click "Preview Move" to simulate file operations safely.</p>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Add Source Modal -->
+  <div id="modal-add-source" class="modal-overlay">
+    <div class="modal-dialog" style="max-width: 500px;">
+      <div class="modal-header">
+        <h3 style="font-size: 16px;">Register Storage Source</h3>
+        <button class="btn btn-secondary btn-sm modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="display:flex; flex-direction:column; gap:14px;">
+          <div>
+            <label style="font-size:13px; color:var(--text-muted); display:block; margin-bottom:6px;">Directory Path</label>
+            <div style="display:flex; gap:8px;">
+              <input type="text" id="modal-source-path" placeholder="e.g. E:\Photos or F:\Fujifilm Footage" style="flex:1; background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:8px 12px; border-radius:6px; font-size:13px;">
+              <button id="btn-browse-source" class="btn btn-secondary btn-sm" type="button">📁 Browse...</button>
+            </div>
+          </div>
+          <div>
+            <label style="font-size:13px; color:var(--text-muted); display:block; margin-bottom:6px;">Friendly Label</label>
+            <input type="text" id="modal-source-label" placeholder="e.g. Fast SSD Work or NAS Archive" style="width:100%; background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:8px 12px; border-radius:6px; font-size:13px;">
+          </div>
+          <div>
+            <label style="font-size:13px; color:var(--text-muted); display:block; margin-bottom:6px;">Drive Type</label>
+            <select id="modal-source-type" style="width:100%; background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:8px 12px; border-radius:6px; font-size:13px;">
+              <option value="SSD">Fast SSD (Working)</option>
+              <option value="HDD">Local Hard Drive</option>
+              <option value="NAS">Network Storage / NAS (Backup)</option>
+              <option value="CLOUD">Cloud / Google Drive</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary modal-close">Cancel</button>
+        <button id="modal-btn-save-source" class="btn btn-primary">Save & Register</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Custom File Context Menu -->
+  <div id="custom-context-menu" class="custom-context-menu">
+    <div class="ctx-header">
+      <span class="ctx-header-icon">🎬</span>
+      <span id="ctx-file-title" class="ctx-header-text">video.mp4</span>
+    </div>
+    <div class="ctx-body">
+      <button class="ctx-item" id="ctx-open-file">
+        <span class="ctx-item-icon">📂</span>
+        <span class="ctx-item-label">Open in File Explorer</span>
+        <span class="ctx-item-hint">Reveal File</span>
+      </button>
+      <button class="ctx-item" id="ctx-open-folder">
+        <span class="ctx-item-icon">📁</span>
+        <span class="ctx-item-label">Open Containing Folder</span>
+        <span class="ctx-item-hint">Directory</span>
+      </button>
+      <div class="ctx-divider"></div>
+      <button class="ctx-item" id="ctx-copy-path">
+        <span class="ctx-item-icon">📋</span>
+        <span class="ctx-item-label">Copy Full File Path</span>
+      </button>
+      <button class="ctx-item" id="ctx-copy-folder">
+        <span class="ctx-item-icon">📑</span>
+        <span class="ctx-item-label">Copy Folder Path</span>
+      </button>
+      <div class="ctx-divider" id="ctx-queue-divider"></div>
+      <button class="ctx-item" id="ctx-queue-item">
+        <span class="ctx-item-icon">▶</span>
+        <span class="ctx-item-label" id="ctx-queue-label">Queue for Transcode</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
