@@ -13,17 +13,19 @@
 - `src/analyzer/video_advisor.py`: Video bitrate, resolution, and codec suitability analyzer for anti-bloat recommendations.
 - `src/transcoder/engine.py`: Batch H.265 transcoder (RTX 3060 NVENC), zero-bloat safeguard, process throttling, metadata copier.
 - `src/organizer/manager.py`: Safe file operations (move, archive, delete to trash, dedupe, sync tracking between backup and sources).
+- `src/proofing/watermarker.py`: Bulk text & PNG logo watermarking with diagonal repeating grid protection, web proof resizing, and instant live preview.
+- `src/proofing/contact_sheet.py`: Standalone client proofing HTML gallery generator with lightbox selection, plus smart client selects resolver & safe exporter with XMP sidecar binding.
+- `src/core/logger.py`: Rotating file logger writing to `logs/savespace.log` with unhandled exception hooks.
+- `src/core/session.py`: Persistent session state and completed task memory manager (`data/session_state.json`).
 - `src/api/server.py`: FastAPI server serving endpoints & interactive dashboard UI.
-- `src/gui/app_window.py`: Standalone desktop window shell using WebView2.
+- `src/gui/app_window.py`: Standalone desktop window shell using WebView2 with AppUserModelID.
+- `SaveSpace.exe`: Native Windows executable launcher (embedded icon, zero-console launch, single-instance mutex).
 - `TECH_DOCUMENTATION.md`: Complete living technical specification, ER diagram, algorithms, and API catalog.
 
 ## Recent Changes
-- Built full standalone desktop software with PyWebView, SQLite catalog, OpenCV blur culling, duplicate finder, NVENC H.265 transcoder, and 1-click launcher `run_savespace.bat`.
-- Added folder location display and native Windows File Explorer right-click integration.
-- Added intelligent video bitrate & suitability analyzer (`video_advisor.py`) and zero-bloat engine safeguard that discards output if larger than original.
-- Fixed duplicate finder: strictly excluded sidecars (.xmp) and non-media from duplicate detection, added Exact Same Filename filter, and prevented auto-checking files with different names.
-- Resolved slow image scrolling: downscaled RAW previews from 4.5MB/40MP to lightweight 380px thumbnails (~12KB, freeing 12.2GB disk space), added zero-SQL fast path with HTTP Cache-Control headers, decoding="async", and content-visibility: auto.
-- Added subfolder deselection & exclusion for drives: Manage Subfolders modal with selective inclusion/exclusion checkboxes, in-place os.walk directory pruning, and optional instant catalog purging.
+- Native Desktop App: Compiled `SaveSpace.exe` with multi-res icon, single-instance mutex, Start Menu shortcut, and rotating file logger (`logs/savespace.log`).
+- Proofing & Watermarking: Multi-folder picker, PNG logo picker, long edge slider, and configurable subfolder naming styles (`prefix`, `custom`, `suffix`).
+- Disk & Session Integrity: Auto-restoring session state, Explorer reveal, and non-destructive proof subfolder isolation.
 
 ## Active Objective
-- Assist user with media library management, batch transcoding, and storage reclamation.
+- Client media proofing, watermarking, batch transcoding, and storage reclamation.

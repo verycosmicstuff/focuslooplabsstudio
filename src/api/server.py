@@ -5,7 +5,7 @@ import subprocess
 import threading
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -17,6 +17,8 @@ from src.config import (
 )
 from src.core.db import get_db, init_db, db_transaction
 from src.core.models import SourceCreate, SourceExclusionsUpdate, CullingAction, TranscodeRequest, OrganizeRule
+from src.core.logger import get_logger, LOG_FILE, LOGS_DIR
+from src.core.session import get_session_state, save_session_state, record_last_task
 from src.scanner.indexer import SourceIndexer
 from src.scanner.meta_extractor import generate_thumbnail
 from src.analyzer.culler import CullingEngine, compute_blur_score
@@ -26,6 +28,15 @@ from src.transcoder.handbrake import HandBrakeBridge
 from src.sync.tracker import SyncTracker
 from src.organizer.manager import FileOrganizer
 from src.analyzer.video_advisor import analyze_video_suitability, format_bitrate
+from src.proofing.watermarker import (
+    watermark_manager, generate_watermark_preview, process_single_image
+)
+from src.proofing.contact_sheet import (
+    generate_contact_sheet_package, parse_client_selects,
+    resolve_selects_against_directory_or_db, execute_selects_export
+)
+
+logger = get_logger("api")
 
 app = FastAPI(title="SaveSpace Backend", version="1.0.0")
 
@@ -36,6 +47,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    is_poll = request.url.path in ("/api/health", "/api/proofing/batch_status", "/api/transcodes/queue")
+    if not is_poll:
+        logger.info(f"{request.method} {request.url.path}")
+    try:
+        response = await call_next(request)
+        if response.status_code >= 400 and not is_poll:
+            logger.warning(f"{request.method} {request.url.path} -> status {response.status_code}")
+        return response
+    except Exception as e:
+        logger.exception(f"Unhandled error handling {request.method} {request.url.path}: {e}")
+        raise
 
 # In-memory scan states
 scan_progress = {}
@@ -208,29 +233,56 @@ def update_source_exclusions(source_id: int, data: SourceExclusionsUpdate):
 @app.post("/api/utils/list_subfolders")
 def list_directory_subfolders(payload: Dict[str, Any]):
     target_path = payload.get("path", "").strip()
+    include_counts = payload.get("include_counts", True)
     if not target_path:
-        return {"subfolders": []}
+        return {"subfolders": [], "direct_photo_count": 0, "folder_name": "", "folder_path": ""}
 
     p = Path(target_path).resolve()
     if not p.exists() or not p.is_dir():
-        return {"subfolders": []}
+        return {"subfolders": [], "direct_photo_count": 0, "folder_name": "", "folder_path": ""}
 
-    system_skips = {"$recycle.bin", "system volume information", ".git", ".idea", ".vscode", "node_modules", ".gemini"}
+    system_skips = {"$recycle.bin", "system volume information", ".git", ".idea", ".vscode", "node_modules", ".gemini", "_proofs"}
+    valid_exts = set(PHOTO_EXTS) | set(RAW_EXTS)
     subfolders = []
+    direct_photo_count = 0
+
     try:
         with os.scandir(str(p)) as it:
             for entry in sorted(it, key=lambda e: e.name.lower()):
                 if entry.is_dir(follow_symlinks=False):
-                    if entry.name.lower() in system_skips:
+                    nl = entry.name.lower()
+                    if nl in system_skips or nl.startswith(("_proof", "_web_proof")) or nl.endswith(("_proofs", "_proof")) or "_proofs" in nl:
                         continue
-                    subfolders.append({
+                    sub_p = str(Path(entry.path).resolve())
+                    sub_item = {
                         "name": entry.name,
-                        "path": str(Path(entry.path).resolve()),
-                        "rel_path": entry.name
-                    })
+                        "path": sub_p,
+                        "rel_path": entry.name,
+                        "photo_count": 0
+                    }
+                    if include_counts:
+                        try:
+                            c = 0
+                            with os.scandir(entry.path) as sub_it:
+                                for se in sub_it:
+                                    if se.is_file() and Path(se.name).suffix.lower() in valid_exts:
+                                        c += 1
+                            sub_item["photo_count"] = c
+                        except Exception:
+                            pass
+                    subfolders.append(sub_item)
+                elif entry.is_file():
+                    if Path(entry.name).suffix.lower() in valid_exts:
+                        direct_photo_count += 1
     except Exception:
         pass
-    return {"subfolders": subfolders}
+
+    return {
+        "subfolders": subfolders,
+        "direct_photo_count": direct_photo_count,
+        "folder_name": p.name if p.name else str(p),
+        "folder_path": str(p)
+    }
 
 @app.delete("/api/sources/{source_id}")
 def delete_source(source_id: int):
@@ -382,6 +434,41 @@ def pick_folder():
         return {"path": "", "label": "", "selected": False}
     except Exception as e:
         return {"path": "", "label": "", "error": str(e), "selected": False}
+
+@app.post("/api/utils/pick_file")
+def pick_file(payload: Optional[Dict[str, Any]] = None):
+    """Opens native Windows file picker dialog."""
+    import tkinter as tk
+    from tkinter import filedialog
+    payload = payload or {}
+    title = payload.get("title", "Select Logo or Watermark Image")
+    file_type_mode = payload.get("type", "image")
+
+    if file_type_mode in ("image", "logo"):
+        filetypes = [
+            ("Image Files (*.png;*.jpg;*.jpeg;*.webp)", "*.png;*.jpg;*.jpeg;*.webp"),
+            ("PNG Transparent Logos (*.png)", "*.png"),
+            ("All Files (*.*)", "*.*")
+        ]
+    else:
+        filetypes = [("All Files (*.*)", "*.*")]
+
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        selected_file = filedialog.askopenfilename(
+            title=title,
+            filetypes=filetypes,
+            master=root
+        )
+        root.destroy()
+        if selected_file:
+            p = Path(selected_file).resolve()
+            return {"path": str(p), "filename": p.name, "selected": True}
+        return {"path": "", "filename": "", "selected": False}
+    except Exception as e:
+        return {"path": "", "filename": "", "error": str(e), "selected": False}
 
 # ----------------- TRANSCODING -----------------
 
@@ -673,6 +760,357 @@ def open_file_location(payload: Dict[str, Any]):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to open explorer: {str(e)}")
+
+# ----------------- CLIENT PROOFING & WATERMARKING -----------------
+
+@app.post("/api/proofing/preview")
+def preview_watermark(payload: Dict[str, Any]):
+    file_id = payload.get("file_id")
+    file_path = payload.get("file_path")
+    config = payload.get("config", {})
+
+    if file_id and not file_path:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT abs_path FROM files WHERE id = ?", (file_id,))
+        row = cursor.fetchone()
+        if row:
+            file_path = row["abs_path"]
+
+    if not file_path or not os.path.isfile(file_path):
+        raise HTTPException(status_code=400, detail="Valid sample file path or file_id required")
+
+    preview_b64 = generate_watermark_preview(file_path, config)
+    if not preview_b64:
+        raise HTTPException(status_code=500, detail="Failed to generate watermark preview")
+
+    return {"preview_data_url": preview_b64}
+
+@app.post("/api/proofing/batch_watermark")
+def start_watermark_batch(payload: Dict[str, Any]):
+    file_ids = payload.get("file_ids", [])
+    file_paths = payload.get("file_paths", [])
+    source_id = payload.get("source_id")
+    source_dir = payload.get("source_dir")
+    output_dir = (payload.get("output_dir") or "").strip()
+    output_mode = payload.get("output_mode") or "custom_dir"  # "custom_dir", "original_folder", "original_subfolder"
+    subfolder_name = (payload.get("subfolder_name") or "_proofs").strip()
+    subfolder_type = (payload.get("subfolder_type") or "suffix").strip()
+    suffix = (payload.get("suffix") or "_proof").strip()
+    config = payload.get("config") or {}
+
+    if output_mode == "custom_dir" and not output_dir:
+        raise HTTPException(status_code=400, detail="Output destination folder is required for custom directory mode")
+
+    files_to_process = []
+    seen = set()
+
+    if file_paths:
+        for fp in file_paths:
+            p = Path(fp)
+            if p.is_file():
+                abs_p = str(p.resolve())
+                if abs_p not in seen:
+                    seen.add(abs_p)
+                    files_to_process.append({"abs_path": abs_p, "filename": p.name})
+    elif file_ids:
+        conn = get_db()
+        cursor = conn.cursor()
+        placeholders = ",".join("?" * len(file_ids))
+        cursor.execute(f"SELECT id, abs_path, filename FROM files WHERE id IN ({placeholders})", file_ids)
+        for r in cursor.fetchall():
+            abs_p = r["abs_path"]
+            if abs_p not in seen:
+                seen.add(abs_p)
+                files_to_process.append(dict(r))
+    elif source_dirs:
+        for sdir in source_dirs:
+            if sdir and os.path.isdir(sdir):
+                p = Path(sdir)
+                for entry in p.rglob("*"):
+                    if entry.is_file():
+                        ext = entry.suffix.lower()
+                        if ext in PHOTO_EXTS or ext in RAW_EXTS:
+                            abs_p = str(entry.resolve())
+                            if abs_p not in seen:
+                                seen.add(abs_p)
+                                files_to_process.append({"abs_path": abs_p, "filename": entry.name})
+    elif source_id:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, abs_path, filename FROM files WHERE source_id = ? AND media_type IN ('photo', 'raw') AND status = 'active'", (source_id,))
+        files_to_process = [dict(r) for r in cursor.fetchall()]
+    elif source_dir and os.path.isdir(source_dir):
+        p = Path(source_dir)
+        for entry in p.rglob("*"):
+            if entry.is_file():
+                ext = entry.suffix.lower()
+                if ext in PHOTO_EXTS or ext in RAW_EXTS:
+                    abs_p = str(entry.resolve())
+                    if abs_p not in seen:
+                        seen.add(abs_p)
+                        files_to_process.append({"abs_path": abs_p, "filename": entry.name})
+
+    if not files_to_process:
+        raise HTTPException(status_code=400, detail="No photos found or selected to watermark")
+
+    started = watermark_manager.start_batch(
+        files_to_process,
+        output_dir if output_mode == "custom_dir" else None,
+        config,
+        suffix=suffix,
+        output_mode=output_mode,
+        subfolder_name=subfolder_name,
+        subfolder_type=subfolder_type
+    )
+    if not started:
+        raise HTTPException(status_code=409, detail="A watermarking batch is already running")
+
+    return {
+        "status": "started",
+        "total_files": len(files_to_process),
+        "output_mode": output_mode,
+        "output_dir": output_dir if output_mode == "custom_dir" else f"Respective Original Folders ({output_mode})"
+    }
+
+@app.get("/api/proofing/batch_status")
+def get_watermark_batch_status():
+    return watermark_manager.get_status()
+
+@app.post("/api/proofing/cancel_batch")
+def cancel_watermark_batch():
+    watermark_manager.cancel()
+    return {"status": "cancelling"}
+
+@app.post("/api/proofing/generate_contact_sheet")
+def generate_contact_sheet(payload: Dict[str, Any]):
+    file_ids = payload.get("file_ids", [])
+    file_paths = payload.get("file_paths", [])
+    source_id = payload.get("source_id")
+    source_dir = payload.get("source_dir")
+    source_dirs = payload.get("source_dirs", [])
+    output_dir = (payload.get("output_dir") or "").strip()
+    project_title = (payload.get("project_title") or "Client Proofing Gallery").strip()
+    client_name = (payload.get("client_name") or "Valued Client").strip()
+    instructions = (payload.get("instructions") or "Click the heart icon on your favorite photos, then click 'Copy Selected Filenames' below to send us your picks.").strip()
+    watermark_text = (payload.get("watermark_text") or "PROOF ONLY").strip()
+
+    if not output_dir:
+        raise HTTPException(status_code=400, detail="Output directory is required")
+
+    files_to_process = []
+    seen = set()
+
+    if file_paths:
+        for fp in file_paths:
+            p = Path(fp)
+            if p.is_file():
+                abs_p = str(p.resolve())
+                if abs_p not in seen:
+                    seen.add(abs_p)
+                    files_to_process.append({"abs_path": abs_p, "filename": p.name})
+    elif file_ids:
+        conn = get_db()
+        cursor = conn.cursor()
+        placeholders = ",".join("?" * len(file_ids))
+        cursor.execute(f"SELECT id, abs_path, filename FROM files WHERE id IN ({placeholders})", file_ids)
+        for r in cursor.fetchall():
+            abs_p = r["abs_path"]
+            if abs_p not in seen:
+                seen.add(abs_p)
+                files_to_process.append(dict(r))
+    elif source_dirs:
+        for sdir in source_dirs:
+            if sdir and os.path.isdir(sdir):
+                p = Path(sdir)
+                for entry in p.rglob("*"):
+                    if entry.is_file():
+                        ext = entry.suffix.lower()
+                        if ext in PHOTO_EXTS or ext in RAW_EXTS:
+                            abs_p = str(entry.resolve())
+                            if abs_p not in seen:
+                                seen.add(abs_p)
+                                files_to_process.append({"abs_path": abs_p, "filename": entry.name})
+    elif source_id:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, abs_path, filename FROM files WHERE source_id = ? AND media_type IN ('photo', 'raw') AND status = 'active'", (source_id,))
+        files_to_process = [dict(r) for r in cursor.fetchall()]
+    elif source_dir and os.path.isdir(source_dir):
+        p = Path(source_dir)
+        for entry in p.rglob("*"):
+            if entry.is_file():
+                ext = entry.suffix.lower()
+                if ext in PHOTO_EXTS or ext in RAW_EXTS:
+                    abs_p = str(entry.resolve())
+                    if abs_p not in seen:
+                        seen.add(abs_p)
+                        files_to_process.append({"abs_path": abs_p, "filename": entry.name})
+
+    if not files_to_process:
+        raise HTTPException(status_code=400, detail="No photos found to include in contact sheet")
+
+    res = generate_contact_sheet_package(
+        files=files_to_process,
+        output_dir=output_dir,
+        project_title=project_title,
+        client_name=client_name,
+        instructions=instructions,
+        watermark_text=watermark_text
+    )
+    record_last_task(
+        task_type="contact_sheet",
+        summary=f"Created Contact Sheet '{project_title}' ({len(files_to_process)} photos)",
+        details={"output_dir": output_dir, "total_photos": len(files_to_process), "html_path": res.get("html_path")}
+    )
+    return res
+
+@app.post("/api/proofing/resolve_selects")
+def resolve_client_selections(payload: Dict[str, Any]):
+    raw_input = payload.get("client_input", "").strip()
+    source_dir = payload.get("source_dir")
+    source_id = payload.get("source_id")
+
+    queries = parse_client_selects(raw_input)
+    if not queries:
+        return {
+            "matched": [],
+            "unmatched": [],
+            "total_queries": 0,
+            "matched_count": 0,
+            "unmatched_count": 0,
+            "match_rate_pct": 0.0
+        }
+
+    return resolve_selects_against_directory_or_db(queries, source_dir=source_dir, source_id=source_id)
+
+@app.post("/api/proofing/export_selects")
+def export_client_selections(payload: Dict[str, Any]):
+    items = payload.get("matched_items", [])
+    destination_dir = payload.get("destination_dir", "").strip()
+    action = payload.get("action", "copy")
+
+    if not destination_dir:
+        raise HTTPException(status_code=400, detail="Destination directory is required")
+    if not items:
+        raise HTTPException(status_code=400, detail="No matched items to export")
+
+    res = execute_selects_export(items, destination_dir, action=action)
+    dest_name = Path(destination_dir).name
+    record_last_task(
+        task_type="selects_export",
+        summary=f"Exported {res.get('processed_count', 0)} selects ({action}) to {dest_name}",
+        details=res
+    )
+    return res
+
+@app.post("/api/utils/list_photos")
+def list_photos_in_dir(payload: Dict[str, Any]):
+    paths = payload.get("paths", [])
+    dir_path = payload.get("path", "").strip()
+    folder_items = payload.get("folder_items", [])
+    if dir_path:
+        paths.append(dir_path)
+
+    # Build targets: List[Tuple[Path, bool]]
+    scan_targets = []
+    if folder_items:
+        for item in folder_items:
+            p_str = item.get("path", "").strip()
+            if p_str and os.path.isdir(p_str):
+                scan_targets.append((Path(p_str), item.get("recursive", True)))
+    else:
+        for dp in paths:
+            dp_clean = dp.strip()
+            if dp_clean and os.path.isdir(dp_clean):
+                scan_targets.append((Path(dp_clean), True))
+
+    if not scan_targets:
+        return {"photos": [], "total": 0}
+
+    photos = []
+    seen = set()
+    valid_exts = set(PHOTO_EXTS) | set(RAW_EXTS)
+
+    try:
+        for root_p, is_rec in scan_targets:
+            if is_rec:
+                entries_iter = root_p.rglob("*")
+            else:
+                entries_iter = root_p.glob("*")
+
+            for entry in entries_iter:
+                if entry.is_file():
+                    # Skip previously exported proof subfolders
+                    if any(part.lower().startswith(("_proof", "_web_proof")) or part.lower().endswith(("_proofs", "_proof")) or "_proofs" in part.lower() for part in entry.parts[:-1]):
+                        continue
+                    ext = entry.suffix.lower()
+                    if ext in valid_exts:
+                        abs_p = str(entry.resolve())
+                        if abs_p not in seen:
+                            seen.add(abs_p)
+                            photos.append({
+                                "abs_path": abs_p,
+                                "filename": entry.name,
+                                "size_bytes": entry.stat().st_size,
+                                "folder_name": entry.parent.name,
+                                "folder_path": str(entry.parent)
+                            })
+    except Exception:
+        pass
+
+    return {"photos": photos[:1500], "total": len(photos)}
+
+# ----------------- SESSION STATE & TASK MEMORY -----------------
+
+@app.get("/api/session/state")
+def api_get_session_state():
+    return get_session_state()
+
+@app.post("/api/session/state")
+def api_save_session_state(payload: Dict[str, Any]):
+    return save_session_state(payload)
+
+# ----------------- APPLICATION LOGGING & MONITORING -----------------
+
+@app.get("/api/logs/recent")
+def api_get_recent_logs(lines: int = 150):
+    if not LOG_FILE.exists():
+        return {
+            "path": str(LOG_FILE),
+            "size_bytes": 0,
+            "lines": ["No log entries recorded yet."]
+        }
+    try:
+        size = LOG_FILE.stat().st_size
+        with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+            recent = all_lines[-lines:] if len(all_lines) > lines else all_lines
+        return {
+            "path": str(LOG_FILE),
+            "size_bytes": size,
+            "lines": [line.rstrip("\r\n") for line in recent]
+        }
+    except Exception as e:
+        logger.error(f"Failed to read log file: {e}")
+        return {
+            "path": str(LOG_FILE),
+            "size_bytes": 0,
+            "lines": [f"Error reading log file: {e}"]
+        }
+
+@app.post("/api/logs/open")
+def api_open_logs_folder():
+    try:
+        if os.name == "nt":
+            os.startfile(str(LOGS_DIR))
+        else:
+            subprocess.Popen(["xdg-open", str(LOGS_DIR)])
+        logger.info(f"Opened logs directory: {LOGS_DIR}")
+        return {"status": "opened", "path": str(LOGS_DIR)}
+    except Exception as e:
+        logger.error(f"Failed to open logs directory: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to open logs folder: {e}")
 
 # Serve Frontend static assets
 UI_DIR = BASE_DIR / "ui"

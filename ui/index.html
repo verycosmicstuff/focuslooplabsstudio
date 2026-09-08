@@ -46,6 +46,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
         Smart Organizer
       </div>
+      <div class="nav-item" data-tab="proofing">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/><path d="M14 6l6 6"/></svg>
+        Proofing & Watermark
+      </div>
     </nav>
 
     <!-- Throttling & Priority Box -->
@@ -74,6 +78,11 @@
         <span id="current-view-title">Storage Overview & Health</span>
       </div>
       <div class="top-actions">
+        <div id="session-last-task-banner" style="display:none; align-items:center; gap:8px; font-size:12px; background:rgba(6, 182, 212, 0.08); border:1px solid rgba(6, 182, 212, 0.3); border-radius:6px; padding:5px 10px; max-width: 460px;">
+          <span style="color:var(--accent-cyan); font-weight:700; white-space:nowrap;">⚡ Resumed Session:</span>
+          <span id="session-last-task-text" style="color:var(--text-main); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title=""></span>
+        </div>
+        <button id="btn-show-logs-modal" class="btn btn-secondary" title="View Application Logs & Tracker">📜 Logs</button>
         <button id="btn-add-source-modal" class="btn btn-primary">+ Add Drive / Folder</button>
         <button id="btn-refresh-all" class="btn btn-secondary">Refresh</button>
       </div>
@@ -408,7 +417,407 @@
         <h4 style="margin-bottom: 10px; font-size: 14px;">Organization Preview Plan</h4>
         <div id="org-preview-container" style="max-height: 400px; overflow-y: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px;">
           <p style="color:var(--text-muted); font-size:13px;">Click "Preview Move" to simulate file operations safely.</p>
+      </section>
+
+      <!-- 8. PROOFING & WATERMARK TAB -->
+      <section id="tab-proofing" class="tab-panel">
+        <!-- Subnavigation Pills -->
+        <div class="toolbar" style="margin-bottom: 16px; border-bottom: 1px solid var(--border-color); padding-bottom: 12px;">
+          <div class="toolbar-group">
+            <button id="pill-watermark" class="btn btn-primary btn-sm">🎨 Bulk Watermark & Web Proofs</button>
+            <button id="pill-contact" class="btn btn-secondary btn-sm">📑 Client Contact Sheet Generator</button>
+            <button id="pill-selects" class="btn btn-secondary btn-sm">🎯 Client Selects Importer & Resolver</button>
+          </div>
         </div>
+
+        <!-- SUBVIEW 1: BULK WATERMARKING & WEB PROOFS -->
+        <div id="subview-watermark" class="proofing-subview">
+          <div style="display: grid; grid-template-columns: 320px 340px 1fr; gap: 18px; align-items: start;">
+            
+            <!-- Left: Source & Multi-Folder Photo Selection -->
+            <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 10px; height: 740px;">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size: 13px; font-weight: 700; color: var(--accent-cyan);">1. Select Folders & Photos</span>
+                <span id="lbl-watermark-count" style="font-size: 11px; color: var(--text-muted);">0 photos</span>
+              </div>
+
+              <div>
+                <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px;">Source Drive / Catalog:</label>
+                <select id="sel-watermark-source" style="width: 100%; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 6px 8px; border-radius: 6px; font-size: 12px;"></select>
+              </div>
+
+              <div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 4px;">
+                  <label style="font-size: 11px; color: var(--text-muted);">Folders Checklist (Multiple Allowed):</label>
+                  <button id="btn-browse-watermark-src" class="btn btn-secondary btn-sm" type="button" style="padding: 2px 7px; font-size: 11px;">📁 + Add Folder</button>
+                </div>
+                <!-- Selected Folders List with checkboxes -->
+                <div id="box-watermark-folders-list" style="max-height: 115px; overflow-y: auto; background: rgba(0,0,0,0.35); border: 1px solid var(--border-color); border-radius: 6px; padding: 6px; display: flex; flex-direction: column; gap: 4px;">
+                  <span id="lbl-no-folders-hint" style="color: var(--text-muted); font-size: 11px; font-style: italic;">No custom folders added yet. Click "+ Add Folder" or choose a drive above.</span>
+                </div>
+              </div>
+
+              <div style="display:flex; justify-content:space-between; align-items:center; gap: 6px;">
+                <input type="text" id="txt-watermark-filter" placeholder="Filter filename..." style="flex:1; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 4px 8px; border-radius: 6px; font-size: 11px;">
+                <button id="btn-watermark-sel-all" class="btn btn-secondary btn-sm" style="font-size: 10px; padding: 3px 6px;">All</button>
+                <button id="btn-watermark-sel-none" class="btn btn-secondary btn-sm" style="font-size: 10px; padding: 3px 6px;">None</button>
+              </div>
+
+              <!-- Photo Candidate List -->
+              <div id="watermark-photos-list" style="flex: 1; overflow-y: auto; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: 6px; padding: 6px; display: flex; flex-direction: column; gap: 4px;">
+                <p style="color: var(--text-muted); font-size: 12px; text-align: center; margin-top: 30px;">Select a drive or folder to load photos.</p>
+              </div>
+            </div>
+
+            <!-- Middle: Watermark Settings & Web Resize -->
+            <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 12px; height: 740px; overflow-y: auto;">
+              <span style="font-size: 13px; font-weight: 700; color: var(--accent-cyan);">2. Watermark & Web Settings</span>
+
+              <div>
+                <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px;">Watermark Type:</label>
+                <select id="sel-watermark-mode" style="width: 100%; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 6px 8px; border-radius: 6px; font-size: 12px;">
+                  <option value="text">Text Watermark</option>
+                  <option value="logo">PNG Logo Watermark</option>
+                  <option value="both">Both (Text + Logo)</option>
+                </select>
+              </div>
+
+              <!-- Text Settings -->
+              <div id="box-watermark-text" style="background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px;">
+                <label style="font-size: 11px; font-weight: 600; color: var(--text-main);">Text Content:</label>
+                <input type="text" id="txt-watermark-string" value="PROOF ONLY — DO NOT COPY" style="width: 100%; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 6px 8px; border-radius: 6px; font-size: 12px;">
+
+                <label style="font-size: 11px; font-weight: 600; color: var(--text-main); margin-top: 2px;">Position:</label>
+                <select id="sel-watermark-pos" style="width: 100%; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 5px 8px; border-radius: 6px; font-size: 12px;">
+                  <option value="diagonal_grid">Tiled Diagonal Repeating Grid (Best for Proofs)</option>
+                  <option value="center">Center</option>
+                  <option value="top-center">Top-Center</option>
+                  <option value="bottom-center">Bottom-Center</option>
+                  <option value="bottom-right">Bottom-Right Corner</option>
+                  <option value="bottom-left">Bottom-Left Corner</option>
+                  <option value="top-right">Top-Right Corner</option>
+                  <option value="top-left">Top-Left Corner</option>
+                </select>
+
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <label style="font-size: 11px; color: var(--text-muted);">Opacity: <strong id="lbl-val-opacity" style="color:var(--accent-cyan);">35%</strong></label>
+                  <input type="range" id="rng-watermark-opacity" min="10" max="100" value="35" style="width: 140px;">
+                </div>
+
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <label style="font-size: 11px; color: var(--text-muted);">Font Scale: <strong id="lbl-val-fontscale" style="color:var(--accent-cyan);">4%</strong></label>
+                  <input type="range" id="rng-watermark-fontscale" min="2" max="10" value="4" style="width: 140px;">
+                </div>
+
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <div style="display:flex; align-items:center; gap: 6px;">
+                    <label style="font-size: 11px; color: var(--text-muted);">Color:</label>
+                    <input type="color" id="col-watermark-color" value="#ffffff" style="background: none; border: none; width: 26px; height: 22px; cursor: pointer;">
+                  </div>
+                  <label style="font-size: 11px; color: var(--text-muted); display:flex; align-items:center; gap: 4px; cursor: pointer;">
+                    <input type="checkbox" id="chk-watermark-shadow" checked>
+                    <span>Drop Shadow</span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Logo Settings -->
+              <div id="box-watermark-logo" style="display: none; background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; flex-direction: column; gap: 8px;">
+                <label style="font-size: 11px; font-weight: 600; color: var(--text-main);">PNG Logo Path:</label>
+                <div style="display:flex; gap: 6px;">
+                  <input type="text" id="txt-watermark-logo-path" placeholder="C:\path\to\logo.png" style="flex:1; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 5px 8px; border-radius: 6px; font-size: 11px;">
+                  <button id="btn-browse-logo" class="btn btn-secondary btn-sm" type="button" style="padding: 3px 6px; font-size: 11px;">Browse</button>
+                </div>
+
+                <label style="font-size: 11px; color: var(--text-muted);">Logo Position:</label>
+                <select id="sel-watermark-logo-pos" style="width: 100%; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 5px 8px; border-radius: 6px; font-size: 12px;">
+                  <option value="bottom-right">Bottom-Right Corner</option>
+                  <option value="bottom-center">Bottom-Center</option>
+                  <option value="top-center">Top-Center</option>
+                  <option value="center">Center</option>
+                  <option value="bottom-left">Bottom-Left Corner</option>
+                  <option value="top-right">Top-Right Corner</option>
+                  <option value="top-left">Top-Left Corner</option>
+                </select>
+
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <label style="font-size: 11px; color: var(--text-muted);">Logo Opacity: <strong id="lbl-val-logo-opacity" style="color:var(--accent-cyan);">80%</strong></label>
+                  <input type="range" id="rng-watermark-logo-opacity" min="10" max="100" value="80" style="width: 140px;">
+                </div>
+
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <label style="font-size: 11px; color: var(--text-muted);">Logo Scale: <strong id="lbl-val-logo-scale" style="color:var(--accent-cyan);">18%</strong></label>
+                  <input type="range" id="rng-watermark-logo-scale" min="5" max="50" value="18" style="width: 140px;">
+                </div>
+              </div>
+
+              <!-- Web Resize & Compression -->
+              <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <label style="font-size: 11px; font-weight: 600; color: var(--text-main);">Long Edge Resize:</label>
+                  <strong id="lbl-val-res" style="font-size: 11px; color: var(--accent-cyan); font-family: monospace;">2048 px (Standard Web Proof)</strong>
+                </div>
+
+                <!-- Slider & Original Checkbox -->
+                <div style="display:flex; align-items:center; gap: 10px;">
+                  <input type="range" id="rng-watermark-res" min="800" max="4000" step="50" value="2048" style="flex:1;">
+                  <label style="font-size: 11px; color: var(--text-muted); display:flex; align-items:center; gap: 4px; cursor:pointer; white-space: nowrap;">
+                    <input type="checkbox" id="chk-watermark-orig-res">
+                    <span>Original</span>
+                  </label>
+                </div>
+
+                <!-- Preset Quick Buttons -->
+                <div style="display:flex; flex-wrap: wrap; gap: 4px;">
+                  <button type="button" class="btn btn-secondary btn-sm btn-res-preset" data-res="1080" style="padding: 2px 7px; font-size: 10px;">1080p</button>
+                  <button type="button" class="btn btn-secondary btn-sm btn-res-preset" data-res="1200" style="padding: 2px 7px; font-size: 10px;">1200px</button>
+                  <button type="button" class="btn btn-secondary btn-sm btn-res-preset" data-res="1600" style="padding: 2px 7px; font-size: 10px;">1600px</button>
+                  <button type="button" class="btn btn-primary btn-sm btn-res-preset" data-res="2048" style="padding: 2px 7px; font-size: 10px;">2048px (Web)</button>
+                  <button type="button" class="btn btn-secondary btn-sm btn-res-preset" data-res="2560" style="padding: 2px 7px; font-size: 10px;">2K (2560)</button>
+                  <button type="button" class="btn btn-secondary btn-sm btn-res-preset" data-res="3840" style="padding: 2px 7px; font-size: 10px;">4K (3840)</button>
+                </div>
+
+                <!-- Hidden input for backward compatibility -->
+                <input type="hidden" id="sel-watermark-res" value="2048">
+
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <label style="font-size: 11px; color: var(--text-muted);">JPEG Quality: <strong id="lbl-val-quality" style="color:var(--accent-cyan);">80%</strong></label>
+                  <input type="range" id="rng-watermark-quality" min="60" max="95" value="80" style="width: 140px;">
+                </div>
+              </div>
+
+              <!-- Destination & Output Options -->
+              <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px;">
+                <label style="font-size: 11px; font-weight: 600; color: var(--text-main);">Export Pics Destination:</label>
+                <select id="sel-watermark-out-mode" style="width: 100%; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 6px 8px; border-radius: 6px; font-size: 12px;">
+                  <option value="original_subfolder" selected>📁 Respective Original Folders (Inside Subfolder)</option>
+                  <option value="original_folder">📁 Respective Original Folders (Alongside Original Files)</option>
+                  <option value="custom_dir">📁 Single Custom Destination Folder...</option>
+                </select>
+
+                <!-- Subfolder Options (shown when original_subfolder is active) -->
+                <div id="box-subfolder-name" style="display: flex; flex-direction: column; gap: 6px;">
+                  <div style="display:flex; align-items:center; gap: 6px;">
+                    <label style="font-size: 11px; color: var(--text-muted); width: 95px;">Naming Style:</label>
+                    <select id="sel-watermark-subfolder-type" style="flex:1; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 4px 8px; border-radius: 6px; font-size: 12px;">
+                      <option value="suffix" selected>Suffix / Postfix (e.g. "shoot1_proofs")</option>
+                      <option value="prefix">Prefix (e.g. "_proofs_shoot1")</option>
+                      <option value="custom">Exact Custom Name (e.g. "_proofs")</option>
+                    </select>
+                  </div>
+                  <div style="display:flex; align-items:center; gap: 6px;">
+                    <label id="lbl-subfolder-name-label" style="font-size: 11px; color: var(--text-muted); width: 95px;">Folder Postfix:</label>
+                    <input type="text" id="txt-watermark-subfolder-name" value="_proofs" placeholder="_proofs" style="flex:1; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 4px 8px; border-radius: 6px; font-size: 12px;">
+                  </div>
+                </div>
+
+                <!-- Custom Dir Input (shown when custom_dir is active) -->
+                <div id="box-watermark-custom-dest" style="display: none; flex-direction: column; gap: 4px;">
+                  <label style="font-size: 11px; color: var(--text-muted);">Custom Target Folder:</label>
+                  <div style="display:flex; gap: 6px;">
+                    <input type="text" id="txt-watermark-dest" placeholder="e.g. F:\ClientProofs" style="flex:1; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 5px 8px; border-radius: 6px; font-size: 12px;">
+                    <button id="btn-browse-watermark-dest" class="btn btn-secondary btn-sm" type="button" style="padding: 4px 8px;">📁 Browse</button>
+                  </div>
+                </div>
+
+                <div id="lbl-dest-hint" style="font-size: 11px; color: var(--accent-emerald);">
+                  💡 Each photo will be saved in a <code>_proofs</code> subfolder inside its respective source folder.
+                </div>
+
+                <div style="display:flex; align-items:center; gap: 6px; margin-top: 2px;">
+                  <label style="font-size: 11px; color: var(--text-muted); width: 95px;">Filename Suffix:</label>
+                  <input type="text" id="txt-watermark-suffix" value="_proof" style="width: 85px; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 4px 8px; border-radius: 6px; font-size: 12px;">
+                </div>
+              </div>
+
+              <button id="btn-start-watermark-batch" class="btn btn-primary" style="margin-top: 4px; width: 100%; justify-content: center; padding: 10px;">
+                🚀 Start Watermark Batch
+              </button>
+            </div>
+
+            <!-- Right: Live Real-Time Preview & Batch Monitor -->
+            <div style="display:flex; flex-direction:column; gap: 14px; height: 740px;">
+              <!-- Live Preview Card -->
+              <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 14px; flex: 1; display: flex; flex-direction: column;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px;">
+                  <div style="display:flex; align-items:center; gap: 8px;">
+                    <span style="font-size: 13px; font-weight: 700; color: var(--accent-cyan);">3. Live Interactive Preview</span>
+                    <span id="lbl-preview-sample-name" style="font-size: 11px; color: var(--text-muted); max-width: 220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
+                  </div>
+                  <button id="btn-preview-refresh" class="btn btn-secondary btn-sm" style="font-size: 11px; padding: 4px 8px;">🔄 Refresh Preview</button>
+                </div>
+
+                <div id="preview-stage" style="flex: 1; background: #070b14; border: 1px solid var(--border-color); border-radius: 8px; display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative;">
+                  <img id="img-watermark-live" src="" alt="Preview" style="max-width: 100%; max-height: 100%; object-fit: contain; display: none;">
+                  <div id="preview-placeholder" style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px;">
+                    Select a photo on the left to see instant live watermark preview.
+                  </div>
+                </div>
+              </div>
+
+              <!-- Batch Progress Card -->
+              <div id="box-watermark-progress" style="display: none; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 14px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px;">
+                  <span id="lbl-batch-prog-title" style="font-size: 13px; font-weight: 700; color: var(--accent-emerald);">Processing Batch...</span>
+                  <div style="display:flex; gap: 8px; align-items:center;">
+                    <span id="lbl-batch-prog-pct" style="font-size: 13px; font-weight: 700; color: #fff;">0%</span>
+                    <button id="btn-cancel-watermark-batch" class="btn btn-danger btn-sm" style="padding: 2px 8px; font-size: 11px;">Cancel</button>
+                  </div>
+                </div>
+                <div class="meter-bar" style="height: 10px; margin-bottom: 8px;">
+                  <div id="bar-watermark-prog-fill" class="meter-fill" style="width: 0%; background: linear-gradient(90deg, var(--accent-cyan), var(--accent-emerald));"></div>
+                </div>
+                <div style="display:flex; justify-content:space-between; font-size: 11px; color: var(--text-muted);">
+                  <span id="lbl-batch-prog-current">Starting...</span>
+                  <span id="lbl-batch-prog-counter">0 / 0</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- SUBVIEW 2: CLIENT CONTACT SHEET GENERATOR -->
+        <div id="subview-contact" class="proofing-subview" style="display: none;">
+          <div style="max-width: 820px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 24px; margin: 0 auto;">
+            <h3 style="font-size: 17px; margin-bottom: 6px; color: var(--text-main);">📑 Generate Standalone Client Contact Sheet</h3>
+            <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 20px;">
+              Produces a responsive, zero-cloud client proofing website package. Clients can open it in any web browser, inspect high-res watermarked photos in a lightbox, click heart icons on their selects, and download or copy their selections with 1 click.
+            </p>
+
+            <div style="display:flex; flex-direction:column; gap: 14px;">
+              <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+                <div>
+                  <label style="font-size: 12px; color: var(--text-muted); display:block; margin-bottom: 4px;">Project / Shoot Title:</label>
+                  <input type="text" id="txt-contact-title" value="Client Proofing Gallery" style="width: 100%; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 8px 12px; border-radius: 6px; font-size: 13px;">
+                </div>
+                <div>
+                  <label style="font-size: 12px; color: var(--text-muted); display:block; margin-bottom: 4px;">Client Name:</label>
+                  <input type="text" id="txt-contact-client" value="Valued Client" style="width: 100%; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 8px 12px; border-radius: 6px; font-size: 13px;">
+                </div>
+              </div>
+
+              <div>
+                <label style="font-size: 12px; color: var(--text-muted); display:block; margin-bottom: 4px;">Client Instructions:</label>
+                <input type="text" id="txt-contact-instructions" value="Click the heart icon on your favorite photos, then click 'Copy Selected Filenames' below to send us your picks." style="width: 100%; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 8px 12px; border-radius: 6px; font-size: 13px;">
+              </div>
+
+              <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+                <div>
+                  <label style="font-size: 12px; color: var(--text-muted); display:block; margin-bottom: 4px;">Watermark Text for Thumbnails:</label>
+                  <input type="text" id="txt-contact-watermark" value="PROOF ONLY" style="width: 100%; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 8px 12px; border-radius: 6px; font-size: 13px;">
+                </div>
+                <div>
+                  <label style="font-size: 12px; color: var(--text-muted); display:block; margin-bottom: 4px;">Selected Photos Count:</label>
+                  <div id="lbl-contact-photos-summary" style="padding: 8px 12px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; font-size: 13px; color: var(--accent-cyan); font-weight: 600;">
+                    0 photos selected from tab 1
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label style="font-size: 12px; color: var(--text-muted); display:block; margin-bottom: 4px;">Output Directory (Package Location):</label>
+                <div style="display:flex; gap: 8px;">
+                  <input type="text" id="txt-contact-dest" placeholder="e.g. F:\ClientDeliveries\SmithWedding_Proofs" style="flex:1; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 8px 12px; border-radius: 6px; font-size: 13px;">
+                  <button id="btn-browse-contact-dest" class="btn btn-secondary btn-sm" type="button">📁 Browse...</button>
+                </div>
+              </div>
+
+              <button id="btn-generate-contact-sheet" class="btn btn-primary" style="padding: 12px; justify-content: center; font-size: 14px; margin-top: 10px;">
+                📑 Generate Standalone Client Contact Sheet
+              </button>
+
+              <!-- Result Banner -->
+              <div id="box-contact-result" style="display: none; background: rgba(16, 185, 129, 0.1); border: 1px solid var(--accent-emerald); border-radius: 8px; padding: 16px; margin-top: 10px;">
+                <div style="font-size: 14px; font-weight: 700; color: var(--accent-emerald); margin-bottom: 6px;">🎉 Contact Sheet Package Ready!</div>
+                <div id="lbl-contact-result-path" style="font-size: 12px; color: var(--text-muted); word-break: break-all; margin-bottom: 12px;"></div>
+                <div style="display:flex; gap: 10px;">
+                  <button id="btn-open-contact-browser" class="btn btn-primary btn-sm">🌐 Open in Browser</button>
+                  <button id="btn-reveal-contact-explorer" class="btn btn-secondary btn-sm">📂 Reveal in File Explorer</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SUBVIEW 3: CLIENT SELECTS IMPORTER & RESOLVER -->
+        <div id="subview-selects" class="proofing-subview" style="display: none;">
+          <div style="display: grid; grid-template-columns: 360px 1fr; gap: 20px; align-items: start;">
+            
+            <!-- Left: Paste Client Selections -->
+            <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 14px;">
+              <span style="font-size: 14px; font-weight: 700; color: var(--accent-cyan);">1. Paste Client Selections</span>
+              <p style="font-size: 12px; color: var(--text-muted);">
+                Paste whatever the client sent back: comma-separated filenames, line breaks, frame numbers (e.g. <code>1001, 1005</code>), or exported JSON.
+              </p>
+
+              <textarea id="txt-selects-input" rows="8" placeholder="e.g.&#10;DSCF0101, DSCF0105, DSCF0120&#10;or&#10;101, 105, 120..." style="width: 100%; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 10px; border-radius: 6px; font-size: 12px; font-family: monospace; resize: vertical;"></textarea>
+
+              <div>
+                <label style="font-size: 11px; color: var(--text-muted); display:block; margin-bottom: 4px;">Shoot Folder to Match Against:</label>
+                <div style="display:flex; gap: 6px;">
+                  <input type="text" id="txt-selects-source-dir" placeholder="Folder with original RAWs/JPEGs..." style="flex:1; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 6px 8px; border-radius: 6px; font-size: 12px;">
+                  <button id="btn-browse-selects-src" class="btn btn-secondary btn-sm" type="button" style="padding: 4px 8px;">📁</button>
+                </div>
+              </div>
+
+              <button id="btn-resolve-selects" class="btn btn-primary" style="justify-content: center; padding: 10px;">
+                🔍 Resolve & Match Selections
+              </button>
+            </div>
+
+            <!-- Right: Matches & Safe Move/Copy -->
+            <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 14px; min-height: 500px;">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size: 14px; font-weight: 700; color: var(--accent-cyan);">2. Matched Selects & Export</span>
+                <div id="box-selects-stats" style="font-size: 12px; font-weight: 600; color: var(--text-muted);">
+                  Awaiting input
+                </div>
+              </div>
+
+              <!-- Unmatched Warning -->
+              <div id="box-selects-unmatched" style="display: none; background: rgba(244, 63, 94, 0.12); border: 1px solid var(--accent-rose); border-radius: 6px; padding: 8px 12px; font-size: 12px; color: var(--accent-rose);"></div>
+
+              <!-- Matched Grid -->
+              <div id="selects-matched-grid" style="flex: 1; max-height: 420px; overflow-y: auto; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px;">
+                <p style="grid-column: 1/-1; text-align: center; color: var(--text-muted); font-size: 13px; margin-top: 40px;">
+                  Paste selections on the left and click "Resolve" to inspect matched photos.
+                </p>
+              </div>
+
+              <!-- Export Controls -->
+              <div id="box-selects-actions" style="display: none; border-top: 1px solid var(--border-color); padding-top: 12px; flex-direction: column; gap: 10px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap: wrap; gap: 10px;">
+                  <div style="display:flex; align-items:center; gap: 8px; flex: 1;">
+                    <label style="font-size: 12px; color: var(--text-muted); white-space: nowrap;">Destination Edit Folder:</label>
+                    <input type="text" id="txt-selects-dest-dir" placeholder="e.g. F:\Shoots\Wedding\Selects_Lightroom" style="flex:1; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 6px 10px; border-radius: 6px; font-size: 12px;">
+                    <button id="btn-browse-selects-dest" class="btn btn-secondary btn-sm" type="button">📁 Browse</button>
+                  </div>
+                </div>
+
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <div style="display:flex; gap: 14px; font-size: 12px;">
+                    <label style="display:flex; align-items:center; gap: 4px; cursor:pointer;">
+                      <input type="radio" name="rad-selects-action" value="copy" checked> Copy (Safe)
+                    </label>
+                    <label style="display:flex; align-items:center; gap: 4px; cursor:pointer;">
+                      <input type="radio" name="rad-selects-action" value="move"> Move
+                    </label>
+                    <span style="color: var(--accent-emerald); font-size: 11px; margin-left: 10px;">✨ Fuji/Sony .XMP sidecars automatically copied together!</span>
+                  </div>
+
+                  <div style="display:flex; gap: 8px;">
+                    <button id="btn-copy-selects-filenames" class="btn btn-secondary btn-sm">📋 Copy List</button>
+                    <button id="btn-execute-selects-export" class="btn btn-primary btn-sm">💾 Export Selects</button>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+          </div>
+        </div>
+
       </section>
     </div>
   </main>
@@ -496,6 +905,78 @@
       <div class="modal-footer">
         <button class="btn btn-secondary modal-close">Cancel</button>
         <button id="btn-save-subfolder-exclusions" class="btn btn-primary">Save & Apply Exclusions</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Proofing Multi-Subfolder Selection Modal -->
+  <div id="modal-proofing-subfolder-picker" class="modal-overlay">
+    <div class="modal-dialog" style="max-width: 620px;">
+      <div class="modal-header">
+        <h3 style="font-size: 16px;">📁 Multiple Subfolders Detected</h3>
+        <button class="btn btn-secondary btn-sm modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="margin-bottom: 12px; background: var(--bg-card); padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border-color);">
+          <div id="lbl-proofing-modal-folder-name" style="font-size: 14px; font-weight: 700; color: var(--accent-cyan); margin-bottom: 2px;"></div>
+          <div id="lbl-proofing-modal-folder-path" style="font-size: 11px; color: var(--text-muted); word-break: break-all;"></div>
+        </div>
+
+        <!-- Option A: Include All Files Recursively -->
+        <div style="background: rgba(6, 182, 212, 0.08); border: 1px solid rgba(6, 182, 212, 0.25); border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+          <div>
+            <div style="font-size: 13px; font-weight: 700; color: var(--text-main);">⚡ Include Entire Folder Recursively</div>
+            <div style="font-size: 11px; color: var(--text-muted);">Include all photos in this parent folder and every subfolder inside it</div>
+          </div>
+          <button id="btn-proofing-add-entire-recursive" type="button" class="btn btn-primary btn-sm" style="white-space: nowrap; padding: 8px 14px;">
+            Add All Recursively
+          </button>
+        </div>
+
+        <!-- Option B: Select Specific Subfolders -->
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px;">
+          <label style="font-size: 12px; font-weight: 700; color: var(--text-main);">Or Select Specific Subfolders:</label>
+          <div style="display:flex; gap: 6px;">
+            <button id="btn-proofing-sub-all" type="button" class="btn btn-secondary btn-sm" style="padding: 2px 8px; font-size: 11px;">Select All</button>
+            <button id="btn-proofing-sub-none" type="button" class="btn btn-secondary btn-sm" style="padding: 2px 8px; font-size: 11px;">Select None</button>
+          </div>
+        </div>
+
+        <!-- Subfolder list with checkboxes -->
+        <div id="proofing-subfolder-list" style="max-height: 250px; overflow-y: auto; background: rgba(0,0,0,0.35); border: 1px solid var(--border-color); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 6px;">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary modal-close">Cancel</button>
+        <button id="btn-proofing-add-checked-subs" type="button" class="btn btn-primary">
+          Add Checked Folders
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Application Logs Modal -->
+  <div id="modal-app-logs" class="modal-overlay">
+    <div class="modal-dialog" style="max-width: 800px;">
+      <div class="modal-header">
+        <h3 style="font-size: 16px;">📜 SaveSpace Application Logs & Issue Tracker</h3>
+        <button class="btn btn-secondary btn-sm modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px;">
+          <div style="font-size:11px; color:var(--text-muted); word-break:break-all;">
+            Target: <code id="lbl-logs-path" style="color:var(--accent-cyan);">logs/savespace.log</code> (<span id="lbl-logs-size">0 KB</span>)
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button id="btn-refresh-logs" type="button" class="btn btn-secondary btn-sm" style="font-size:11px;">🔄 Refresh</button>
+            <button id="btn-open-logs-folder" type="button" class="btn btn-primary btn-sm" style="font-size:11px;">📂 Open in Explorer</button>
+          </div>
+        </div>
+        <pre id="pre-logs-content" style="max-height: 420px; min-height: 220px; overflow-y: auto; background: #050811; color: #a5b4fc; font-family: Consolas, 'Cascadia Code', monospace; font-size: 11px; line-height: 1.55; padding: 12px; border: 1px solid var(--border-color); border-radius: 6px; white-space: pre-wrap; word-break: break-all;"></pre>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary modal-close">Close</button>
       </div>
     </div>
   </div>

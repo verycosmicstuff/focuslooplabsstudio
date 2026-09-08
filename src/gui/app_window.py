@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 import time
 import threading
 import uvicorn
@@ -10,6 +10,13 @@ def start_server():
     uvicorn.run(app, host=DEFAULT_HOST, port=DEFAULT_PORT, log_level="warning")
 
 def run_app():
+    # Set Windows AppUserModelID for taskbar icon grouping
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("verycosmicstuff.savespace.pro")
+    except Exception:
+        pass
+
     # Start API server in background thread
     server_thread = threading.Thread(target=start_server, daemon=True)
     server_thread.start()

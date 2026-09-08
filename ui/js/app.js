@@ -202,6 +202,13 @@ function hideContextMenu() {
   activeContextItem = null;
 }
 
+function switchTab(tabName) {
+  const item = document.querySelector(`.nav-item[data-tab="${tabName}"]`);
+  if (item && !item.classList.contains('active')) {
+    item.click();
+  }
+}
+
 document.querySelectorAll('.nav-item').forEach(item => {
   item.addEventListener('click', () => {
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
@@ -219,10 +226,15 @@ document.querySelectorAll('.nav-item').forEach(item => {
       duplicates: 'Duplicate Media Finder',
       transcoder: 'GPU-Accelerated H.265 Transcoder (NVENC)',
       sync: 'SSD & NAS Backup Sync Matrix',
-      organizer: 'Smart Media Organizer'
+      organizer: 'Smart Media Organizer',
+      proofing: 'Client Proofing, Watermarking & Selects'
     };
     document.getElementById('current-view-title').innerText = titles[currentTab] || 'SaveSpace Pro';
     refreshCurrentTab();
+
+    if (typeof debouncedSaveSessionState === 'function') {
+      debouncedSaveSessionState({ last_active_tab: currentTab });
+    }
   });
 });
 
@@ -267,6 +279,7 @@ function refreshCurrentTab() {
   else if (currentTab === 'transcoder') loadTranscoder();
   else if (currentTab === 'sync') loadSync();
   else if (currentTab === 'organizer') loadOrganizer();
+  else if (currentTab === 'proofing') loadProofing();
 }
 
 async function loadOverview() {
@@ -1610,11 +1623,1619 @@ if (btnBrowseOrg) {
   });
 }
 
+// ============================================================================
+// 8. CLIENT PROOFING, BULK WATERMARKING & SELECTS PICKER
+// ============================================================================
+
+let proofingPhotos = [];
+let selectedProofingPaths = new Set();
+let activePreviewPhotoPath = null;
+let watermarkBatchInterval = null;
+let previewDebounceTimer = null;
+let lastGeneratedContactSheetHtml = null;
+let lastResolvedSelects = null;
+
+// Subview Pills Switching
+const pillWatermark = document.getElementById('pill-watermark');
+const pillContact = document.getElementById('pill-contact');
+const pillSelects = document.getElementById('pill-selects');
+
+const subviewWatermark = document.getElementById('subview-watermark');
+const subviewContact = document.getElementById('subview-contact');
+const subviewSelects = document.getElementById('subview-selects');
+
+let currentProofingSubview = 'watermark';
+
+function switchProofingSubview(viewName) {
+  currentProofingSubview = viewName;
+  if (pillWatermark) pillWatermark.className = 'btn btn-sm ' + (viewName === 'watermark' ? 'btn-primary' : 'btn-secondary');
+  if (pillContact) pillContact.className = 'btn btn-sm ' + (viewName === 'contact' ? 'btn-primary' : 'btn-secondary');
+  if (pillSelects) pillSelects.className = 'btn btn-sm ' + (viewName === 'selects' ? 'btn-primary' : 'btn-secondary');
+
+  if (subviewWatermark) subviewWatermark.style.display = (viewName === 'watermark' ? 'block' : 'none');
+  if (subviewContact) subviewContact.style.display = (viewName === 'contact' ? 'block' : 'none');
+  if (subviewSelects) subviewSelects.style.display = (viewName === 'selects' ? 'block' : 'none');
+
+  if (viewName === 'contact') {
+    const summaryEl = document.getElementById('lbl-contact-photos-summary');
+    if (summaryEl) {
+      const count = selectedProofingPaths.size > 0 ? selectedProofingPaths.size : proofingPhotos.length;
+      summaryEl.innerText = `${count} photos ready to generate contact sheet`;
+    }
+  }
+
+  if (typeof debouncedSaveSessionState === 'function') {
+    debouncedSaveSessionState({ last_proofing_subview: viewName });
+  }
+}
+
+if (pillWatermark) pillWatermark.addEventListener('click', () => switchProofingSubview('watermark'));
+if (pillContact) pillContact.addEventListener('click', () => switchProofingSubview('contact'));
+if (pillSelects) pillSelects.addEventListener('click', () => switchProofingSubview('selects'));
+
+// Mode Switcher (Text vs Logo vs Both)
+const selWatermarkMode = document.getElementById('sel-watermark-mode');
+const boxWatermarkText = document.getElementById('box-watermark-text');
+const boxWatermarkLogo = document.getElementById('box-watermark-logo');
+
+if (selWatermarkMode) {
+  selWatermarkMode.addEventListener('change', () => {
+    const val = selWatermarkMode.value;
+    if (boxWatermarkText) boxWatermarkText.style.display = (val === 'text' || val === 'both') ? 'flex' : 'none';
+    if (boxWatermarkLogo) boxWatermarkLogo.style.display = (val === 'logo' || val === 'both') ? 'flex' : 'none';
+    debouncedTriggerPreview();
+  });
+}
+
+// Sliders live values
+const rngOpacity = document.getElementById('rng-watermark-opacity');
+const lblValOpacity = document.getElementById('lbl-val-opacity');
+if (rngOpacity && lblValOpacity) {
+  rngOpacity.addEventListener('input', () => {
+    lblValOpacity.innerText = rngOpacity.value + '%';
+    debouncedTriggerPreview();
+  });
+}
+
+const rngFontScale = document.getElementById('rng-watermark-fontscale');
+const lblValFontScale = document.getElementById('lbl-val-fontscale');
+if (rngFontScale && lblValFontScale) {
+  rngFontScale.addEventListener('input', () => {
+    lblValFontScale.innerText = rngFontScale.value + '%';
+    debouncedTriggerPreview();
+  });
+}
+
+const rngQuality = document.getElementById('rng-watermark-quality');
+const lblValQuality = document.getElementById('lbl-val-quality');
+if (rngQuality && lblValQuality) {
+  rngQuality.addEventListener('input', () => {
+    lblValQuality.innerText = rngQuality.value + '%';
+  });
+}
+
+// Long Edge Resolution Slider & Preset Buttons
+const rngRes = document.getElementById('rng-watermark-res');
+const lblValRes = document.getElementById('lbl-val-res');
+const chkOrigRes = document.getElementById('chk-watermark-orig-res');
+const hiddenRes = document.getElementById('sel-watermark-res');
+const resPresetButtons = document.querySelectorAll('.btn-res-preset');
+
+function getResLabelText(val) {
+  val = parseInt(val);
+  if (val === 1080) return '1080 px (Social / HD)';
+  if (val === 1200) return '1200 px (Compact Proof)';
+  if (val === 1600) return '1600 px (Medium Proof)';
+  if (val === 1920) return '1920 px (Full HD)';
+  if (val === 2048) return '2048 px (Standard Web Proof)';
+  if (val === 2560) return '2560 px (2K QHD)';
+  if (val === 3840) return '3840 px (4K UHD)';
+  return `${val} px`;
+}
+
+function updateResUI(val, isOriginal = false) {
+  if (isOriginal) {
+    if (chkOrigRes) chkOrigRes.checked = true;
+    if (rngRes) rngRes.disabled = true;
+    if (lblValRes) lblValRes.innerText = 'Original Resolution (No Downscale)';
+    if (hiddenRes) hiddenRes.value = '0';
+    resPresetButtons.forEach(b => b.className = 'btn btn-secondary btn-sm btn-res-preset');
+  } else {
+    val = parseInt(val) || 2048;
+    if (chkOrigRes) chkOrigRes.checked = false;
+    if (rngRes) {
+      rngRes.disabled = false;
+      rngRes.value = val;
+    }
+    if (lblValRes) lblValRes.innerText = getResLabelText(val);
+    if (hiddenRes) hiddenRes.value = val.toString();
+
+    resPresetButtons.forEach(b => {
+      const bVal = parseInt(b.dataset.res);
+      b.className = (bVal === val)
+        ? 'btn btn-primary btn-sm btn-res-preset'
+        : 'btn btn-secondary btn-sm btn-res-preset';
+    });
+  }
+}
+
+if (rngRes) {
+  rngRes.addEventListener('input', () => {
+    updateResUI(rngRes.value, false);
+  });
+}
+
+if (chkOrigRes) {
+  chkOrigRes.addEventListener('change', () => {
+    if (chkOrigRes.checked) {
+      updateResUI(0, true);
+    } else {
+      updateResUI(rngRes ? rngRes.value : 2048, false);
+    }
+  });
+}
+
+resPresetButtons.forEach(btn => {
+  btn.addEventListener('click', () => {
+    const r = btn.dataset.res;
+    updateResUI(r, false);
+  });
+});
+
+const rngLogoOpacity = document.getElementById('rng-watermark-logo-opacity');
+const lblValLogoOpacity = document.getElementById('lbl-val-logo-opacity');
+if (rngLogoOpacity && lblValLogoOpacity) {
+  rngLogoOpacity.addEventListener('input', () => {
+    lblValLogoOpacity.innerText = rngLogoOpacity.value + '%';
+    debouncedTriggerPreview();
+  });
+}
+
+const rngLogoScale = document.getElementById('rng-watermark-logo-scale');
+const lblValLogoScale = document.getElementById('lbl-val-logo-scale');
+if (rngLogoScale && lblValLogoScale) {
+  rngLogoScale.addEventListener('input', () => {
+    lblValLogoScale.innerText = rngLogoScale.value + '%';
+    debouncedTriggerPreview();
+  });
+}
+
+// Preview change triggers
+['txt-watermark-string', 'sel-watermark-pos', 'col-watermark-color', 'chk-watermark-shadow', 'sel-watermark-logo-pos'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) {
+    el.addEventListener('input', () => debouncedTriggerPreview());
+    el.addEventListener('change', () => debouncedTriggerPreview());
+  }
+});
+
+function debouncedTriggerPreview() {
+  clearTimeout(previewDebounceTimer);
+  previewDebounceTimer = setTimeout(() => {
+    triggerWatermarkPreview();
+  }, 320);
+}
+
+// Native Folder Pickers for Proofing
+function setupFolderPicker(btnId, inputId, onSelectedCallback) {
+  const btn = document.getElementById(btnId);
+  const input = document.getElementById(inputId);
+  if (!btn || !input) return;
+
+  btn.addEventListener('click', async () => {
+    try {
+      const res = await fetch(API_BASE + '/api/utils/pick_folder', { method: 'POST' });
+      const data = await res.json();
+      if (data.selected && data.path) {
+        input.value = data.path;
+        if (onSelectedCallback) onSelectedCallback(data.path);
+      }
+    } catch (e) {
+      console.error('Folder picker error:', e);
+    }
+  });
+}
+
+// Native Folder Pickers for Proofing
+function setupFolderPicker(btnId, inputId, onSelectedCallback) {
+  const btn = document.getElementById(btnId);
+  const input = document.getElementById(inputId);
+  if (!btn || !input) return;
+
+  btn.addEventListener('click', async () => {
+    try {
+      const res = await fetch(API_BASE + '/api/utils/pick_folder', { method: 'POST' });
+      const data = await res.json();
+      if (data.selected && data.path) {
+        input.value = data.path;
+        if (onSelectedCallback) onSelectedCallback(data.path);
+      }
+    } catch (e) {
+      console.error('Folder picker error:', e);
+    }
+  });
+}
+
+// Multi-folder management state
+let customProofingFolders = []; // array of { path: string, label: string, checked: boolean, recursive?: boolean }
+let pendingSubfolderSelection = null; // holds { parentPath, parentLabel, subfolders, directCount }
+
+function addFolderToProofingList(pNorm, label, doRenderAndLoad = true, recursive = true) {
+  const existing = customProofingFolders.find(f => f.path.toLowerCase() === pNorm.toLowerCase() && f.recursive === recursive);
+  if (!existing) {
+    customProofingFolders.push({
+      path: pNorm,
+      label: label,
+      checked: true,
+      recursive: recursive
+    });
+    if (doRenderAndLoad) {
+      renderCustomFoldersList();
+      loadPhotosFromActiveFolders();
+      showToast(`Added folder: ${label}`, 'success');
+      if (typeof debouncedSaveSessionState === 'function') {
+        debouncedSaveSessionState();
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
+const btnAddWatermarkFolder = document.getElementById('btn-browse-watermark-src');
+if (btnAddWatermarkFolder) {
+  btnAddWatermarkFolder.addEventListener('click', async () => {
+    try {
+      const res = await fetch(API_BASE + '/api/utils/pick_folder', { method: 'POST' });
+      const data = await res.json();
+      if (data.selected && data.path) {
+        const pNorm = data.path.trim();
+
+        // Check if this folder has subfolders
+        try {
+          const subRes = await fetch(API_BASE + '/api/utils/list_subfolders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: pNorm, include_counts: true })
+          });
+          const subData = await subRes.json();
+          const subs = subData.subfolders || [];
+          const directCount = subData.direct_photo_count || 0;
+
+          if (subs.length === 0) {
+            // No subfolders, add directly
+            addFolderToProofingList(pNorm, data.label || subData.folder_name || pNorm, true, true);
+          } else {
+            // Subfolders detected! Prompt user with modal
+            openSubfolderPickerModal({
+              parentPath: pNorm,
+              parentLabel: data.label || subData.folder_name || pNorm,
+              subfolders: subs,
+              directCount: directCount
+            });
+          }
+        } catch (e) {
+          addFolderToProofingList(pNorm, data.label || pNorm, true, true);
+        }
+      }
+    } catch (e) {
+      console.error('Folder picker error:', e);
+    }
+  });
+}
+
+function openSubfolderPickerModal(data) {
+  pendingSubfolderSelection = data;
+  const modal = document.getElementById('modal-proofing-subfolder-picker');
+  const lblName = document.getElementById('lbl-proofing-modal-folder-name');
+  const lblPath = document.getElementById('lbl-proofing-modal-folder-path');
+  const listContainer = document.getElementById('proofing-subfolder-list');
+
+  if (!modal) return;
+
+  if (lblName) lblName.innerText = `📁 ${data.parentLabel}`;
+  if (lblPath) lblPath.innerText = data.parentPath;
+  if (listContainer) listContainer.innerHTML = '';
+
+  // 1. Direct files in root if any
+  if (data.directCount > 0) {
+    const rootRow = createSubfolderRowItem({
+      path: data.parentPath,
+      name: `${data.parentLabel} (Direct Files in Root)`,
+      photo_count: data.directCount,
+      is_root: true
+    });
+    listContainer.appendChild(rootRow);
+  }
+
+  // 2. Add each subfolder
+  data.subfolders.forEach(sub => {
+    const subRow = createSubfolderRowItem({
+      path: sub.path,
+      name: sub.name,
+      photo_count: sub.photo_count || 0,
+      is_root: false
+    });
+    listContainer.appendChild(subRow);
+  });
+
+  updateCheckedSubsCountButton();
+  modal.classList.add('active');
+}
+
+function createSubfolderRowItem(item) {
+  const row = document.createElement('div');
+  row.className = 'proofing-sub-row';
+  row.style.display = 'flex';
+  row.style.alignItems = 'center';
+  row.style.justifyContent = 'space-between';
+  row.style.gap = '8px';
+  row.style.background = 'rgba(6, 182, 212, 0.1)';
+  row.style.border = '1px solid rgba(6, 182, 212, 0.25)';
+  row.style.borderRadius = '6px';
+  row.style.padding = '6px 10px';
+  row.style.cursor = 'pointer';
+
+  const left = document.createElement('label');
+  left.style.display = 'flex';
+  left.style.alignItems = 'center';
+  left.style.gap = '8px';
+  left.style.flex = '1';
+  left.style.cursor = 'pointer';
+
+  const chk = document.createElement('input');
+  chk.type = 'checkbox';
+  chk.className = 'chk-proofing-sub-item';
+  chk.checked = true;
+  chk.dataset.path = item.path;
+  chk.dataset.name = item.name;
+  chk.dataset.isRoot = item.is_root ? '1' : '0';
+
+  chk.addEventListener('change', () => {
+    row.style.background = chk.checked ? 'rgba(6, 182, 212, 0.12)' : 'rgba(255,255,255,0.02)';
+    row.style.borderColor = chk.checked ? 'rgba(6, 182, 212, 0.3)' : 'var(--border-color)';
+    updateCheckedSubsCountButton();
+  });
+
+  const icon = document.createElement('span');
+  icon.innerText = item.is_root ? '📂' : '📁';
+
+  const nameSpan = document.createElement('span');
+  nameSpan.style.fontSize = '12px';
+  nameSpan.style.fontWeight = '600';
+  nameSpan.style.color = 'var(--text-main)';
+  nameSpan.innerText = item.name;
+
+  left.appendChild(chk);
+  left.appendChild(icon);
+  left.appendChild(nameSpan);
+
+  const countBadge = document.createElement('span');
+  countBadge.className = 'brand-badge';
+  countBadge.style.fontSize = '10px';
+  countBadge.style.background = item.photo_count > 0 ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255,255,255,0.05)';
+  countBadge.style.color = item.photo_count > 0 ? 'var(--accent-emerald)' : 'var(--text-muted)';
+  countBadge.innerText = item.photo_count > 0 ? `${item.photo_count} photos` : 'empty';
+
+  row.appendChild(left);
+  row.appendChild(countBadge);
+
+  row.addEventListener('click', (e) => {
+    if (e.target !== chk) {
+      chk.checked = !chk.checked;
+      chk.dispatchEvent(new Event('change'));
+    }
+  });
+
+  return row;
+}
+
+function updateCheckedSubsCountButton() {
+  const btn = document.getElementById('btn-proofing-add-checked-subs');
+  if (!btn) return;
+  const checked = document.querySelectorAll('#proofing-subfolder-list .chk-proofing-sub-item:checked');
+  btn.innerText = `Add Checked Folders (${checked.length})`;
+  btn.disabled = checked.length === 0;
+}
+
+const btnAddEntireRecursive = document.getElementById('btn-proofing-add-entire-recursive');
+if (btnAddEntireRecursive) {
+  btnAddEntireRecursive.addEventListener('click', () => {
+    if (!pendingSubfolderSelection) return;
+    addFolderToProofingList(
+      pendingSubfolderSelection.parentPath,
+      `${pendingSubfolderSelection.parentLabel} (All Subfolders)`,
+      true,
+      true
+    );
+    document.getElementById('modal-proofing-subfolder-picker')?.classList.remove('active');
+  });
+}
+
+const btnAddCheckedSubs = document.getElementById('btn-proofing-add-checked-subs');
+if (btnAddCheckedSubs) {
+  btnAddCheckedSubs.addEventListener('click', () => {
+    const checkedBoxes = Array.from(document.querySelectorAll('#proofing-subfolder-list .chk-proofing-sub-item:checked'));
+    if (checkedBoxes.length === 0) return;
+
+    let addedCount = 0;
+    checkedBoxes.forEach(chk => {
+      const p = chk.dataset.path;
+      const name = chk.dataset.name;
+      const isRoot = chk.dataset.isRoot === '1';
+      const added = addFolderToProofingList(p, name, false, !isRoot);
+      if (added) addedCount++;
+    });
+
+    document.getElementById('modal-proofing-subfolder-picker')?.classList.remove('active');
+    renderCustomFoldersList();
+    loadPhotosFromActiveFolders();
+    showToast(`Added ${addedCount} folder(s) to checklist!`, 'success');
+  });
+}
+
+const btnProofingSubAll = document.getElementById('btn-proofing-sub-all');
+if (btnProofingSubAll) {
+  btnProofingSubAll.addEventListener('click', () => {
+    document.querySelectorAll('#proofing-subfolder-list .chk-proofing-sub-item').forEach(c => {
+      c.checked = true;
+      c.dispatchEvent(new Event('change'));
+    });
+  });
+}
+
+const btnProofingSubNone = document.getElementById('btn-proofing-sub-none');
+if (btnProofingSubNone) {
+  btnProofingSubNone.addEventListener('click', () => {
+    document.querySelectorAll('#proofing-subfolder-list .chk-proofing-sub-item').forEach(c => {
+      c.checked = false;
+      c.dispatchEvent(new Event('change'));
+    });
+  });
+}
+
+function renderCustomFoldersList() {
+  const container = document.getElementById('box-watermark-folders-list');
+  if (!container) return;
+
+  if (customProofingFolders.length === 0) {
+    container.innerHTML = '<span style="color:var(--text-muted); font-size:11px; font-style:italic;">No custom folders added yet. Click "+ Add Folder" or choose a drive above.</span>';
+    return;
+  }
+
+  container.innerHTML = '';
+  customProofingFolders.forEach((f, idx) => {
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.alignItems = 'center';
+    row.style.justifyContent = 'space-between';
+    row.style.gap = '6px';
+    row.style.background = f.checked ? 'rgba(6, 182, 212, 0.12)' : 'rgba(255, 255, 255, 0.02)';
+    row.style.border = f.checked ? '1px solid rgba(6, 182, 212, 0.3)' : '1px solid var(--border-color)';
+    row.style.borderRadius = '4px';
+    row.style.padding = '3px 6px';
+    row.style.fontSize = '11px';
+
+    const left = document.createElement('label');
+    left.style.display = 'flex';
+    left.style.alignItems = 'center';
+    left.style.gap = '6px';
+    left.style.flex = '1';
+    left.style.cursor = 'pointer';
+    left.style.overflow = 'hidden';
+
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.checked = f.checked;
+    chk.addEventListener('change', () => {
+      f.checked = chk.checked;
+      renderCustomFoldersList();
+      loadPhotosFromActiveFolders();
+      if (typeof debouncedSaveSessionState === 'function') {
+        debouncedSaveSessionState();
+      }
+    });
+
+    const labelSpan = document.createElement('span');
+    labelSpan.style.fontWeight = '600';
+    labelSpan.style.color = f.checked ? 'var(--accent-cyan)' : 'var(--text-muted)';
+    labelSpan.style.whiteSpace = 'nowrap';
+    labelSpan.style.overflow = 'hidden';
+    labelSpan.style.textOverflow = 'ellipsis';
+    labelSpan.title = f.path;
+    const badgeText = f.recursive ? '⚡ ' : '📁 ';
+    labelSpan.innerText = `${badgeText}${f.label}`;
+
+    left.appendChild(chk);
+    left.appendChild(labelSpan);
+
+    const btnRemove = document.createElement('button');
+    btnRemove.type = 'button';
+    btnRemove.innerHTML = '&times;';
+    btnRemove.title = 'Remove folder from checklist';
+    btnRemove.style.background = 'none';
+    btnRemove.style.border = 'none';
+    btnRemove.style.color = 'var(--text-muted)';
+    btnRemove.style.cursor = 'pointer';
+    btnRemove.style.fontSize = '14px';
+    btnRemove.style.padding = '0 4px';
+    btnRemove.addEventListener('click', (e) => {
+      e.stopPropagation();
+      customProofingFolders.splice(idx, 1);
+      renderCustomFoldersList();
+      loadPhotosFromActiveFolders();
+      if (typeof debouncedSaveSessionState === 'function') {
+        debouncedSaveSessionState();
+      }
+    });
+
+    row.appendChild(left);
+    row.appendChild(btnRemove);
+    container.appendChild(row);
+  });
+}
+
+setupFolderPicker('btn-browse-watermark-dest', 'txt-watermark-dest');
+setupFolderPicker('btn-browse-contact-dest', 'txt-contact-dest');
+setupFolderPicker('btn-browse-selects-src', 'txt-selects-source-dir');
+setupFolderPicker('btn-browse-selects-dest', 'txt-selects-dest-dir');
+
+// Native File Picker for PNG Logo (Replaces old text prompt)
+const btnBrowseLogo = document.getElementById('btn-browse-logo');
+if (btnBrowseLogo) {
+  btnBrowseLogo.addEventListener('click', async () => {
+    try {
+      const res = await fetch(API_BASE + '/api/utils/pick_file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'Select PNG Logo / Watermark Image',
+          type: 'logo'
+        })
+      });
+      const data = await res.json();
+      if (data.selected && data.path) {
+        const logoInput = document.getElementById('txt-watermark-logo-path');
+        if (logoInput) {
+          logoInput.value = data.path;
+          debouncedTriggerPreview();
+          showToast(`Selected logo: ${data.filename}`, 'success');
+        }
+      }
+    } catch (e) {
+      console.error('File picker error:', e);
+      showToast('Could not open file picker: ' + e, 'error');
+    }
+  });
+}
+
+// Load Proofing Overview
+async function loadProofing() {
+  try {
+    const sourcesRes = await fetch(API_BASE + '/api/sources').then(r => r.json());
+    sourcesData = sourcesRes;
+
+    const selSrc = document.getElementById('sel-watermark-source');
+    if (selSrc) {
+      const curVal = selSrc.value;
+      selSrc.innerHTML = '<option value="">-- Choose Drive or Indexed Folder --</option>';
+      sourcesRes.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.innerText = `${s.label} (${s.file_count || 0} files)`;
+        selSrc.appendChild(opt);
+      });
+      if (curVal) selSrc.value = curVal;
+    }
+
+    if (proofingPhotos.length === 0 && customProofingFolders.length === 0 && sourcesRes.length > 0) {
+      const firstSrc = sourcesRes[0];
+      if (selSrc) selSrc.value = firstSrc.id;
+      loadPhotosFromActiveFolders(firstSrc.id);
+    }
+  } catch (e) {
+    console.error('Failed to load proofing sources:', e);
+  }
+}
+
+const selWatermarkSrc = document.getElementById('sel-watermark-source');
+if (selWatermarkSrc) {
+  selWatermarkSrc.addEventListener('change', () => {
+    const srcId = selWatermarkSrc.value;
+    if (srcId) {
+      loadPhotosFromActiveFolders(srcId);
+    }
+  });
+}
+
+// Load photos from checked custom folders or selected drive
+async function loadPhotosFromActiveFolders(forceSourceId) {
+  const listEl = document.getElementById('watermark-photos-list');
+  const countEl = document.getElementById('lbl-watermark-count');
+  if (!listEl) return;
+
+  listEl.innerHTML = '<p style="color:var(--text-muted); font-size:12px; text-align:center; padding:20px;">Scanning photos...</p>';
+  proofingPhotos = [];
+  selectedProofingPaths.clear();
+
+  const activeFolders = customProofingFolders.filter(f => f.checked);
+  const sourceId = forceSourceId || document.getElementById('sel-watermark-source')?.value || null;
+
+  try {
+    if (activeFolders.length > 0) {
+      const res = await fetch(API_BASE + '/api/utils/list_photos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          folder_items: activeFolders.map(f => ({ path: f.path, recursive: f.recursive !== false })),
+          paths: activeFolders.map(f => f.path)
+        })
+      });
+      const data = await res.json();
+      proofingPhotos = data.photos || [];
+    } else if (sourceId) {
+      const res = await fetch(API_BASE + `/api/culling?source_id=${sourceId}&limit=500`).then(r => r.json());
+      proofingPhotos = res.map(r => ({
+        id: r.id,
+        abs_path: r.abs_path,
+        filename: r.filename,
+        size_bytes: r.size_bytes
+      }));
+    }
+
+    renderWatermarkPhotoList();
+
+    if (countEl) countEl.innerText = `${proofingPhotos.length} photos found`;
+
+    // Automatically set sample for preview
+    if (proofingPhotos.length > 0) {
+      activePreviewPhotoPath = proofingPhotos[0].abs_path;
+      proofingPhotos.forEach(p => selectedProofingPaths.add(p.abs_path));
+      updateWatermarkSelectCounts();
+      triggerWatermarkPreview();
+    }
+  } catch (err) {
+    listEl.innerHTML = `<p style="color:var(--accent-rose); font-size:12px; padding:10px;">Failed to load photos: ${err}</p>`;
+  }
+}
+
+function renderWatermarkPhotoList() {
+  const listEl = document.getElementById('watermark-photos-list');
+  const filterVal = (document.getElementById('txt-watermark-filter')?.value || '').toLowerCase();
+  if (!listEl) return;
+
+  listEl.innerHTML = '';
+  if (proofingPhotos.length === 0) {
+    listEl.innerHTML = '<p style="color:var(--text-muted); font-size:12px; text-align:center; padding:20px;">No photos found in this source.</p>';
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+
+  proofingPhotos.forEach(item => {
+    if (filterVal && !item.filename.toLowerCase().includes(filterVal)) {
+      return;
+    }
+
+    const row = document.createElement('div');
+    const isChecked = selectedProofingPaths.has(item.abs_path);
+    const isPreviewing = (activePreviewPhotoPath === item.abs_path);
+
+    row.style.display = 'flex';
+    row.style.alignItems = 'center';
+    row.style.gap = '8px';
+    row.style.padding = '6px 8px';
+    row.style.borderRadius = '6px';
+    row.style.cursor = 'pointer';
+    row.style.background = isPreviewing ? 'rgba(6, 182, 212, 0.15)' : 'rgba(255,255,255,0.02)';
+    row.style.border = isPreviewing ? '1px solid var(--accent-cyan)' : '1px solid transparent';
+    row.style.transition = 'all 0.15s';
+
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.checked = isChecked;
+    chk.addEventListener('change', (e) => {
+      e.stopPropagation();
+      if (chk.checked) {
+        selectedProofingPaths.add(item.abs_path);
+      } else {
+        selectedProofingPaths.delete(item.abs_path);
+      }
+      updateWatermarkSelectCounts();
+    });
+
+    const label = document.createElement('div');
+    label.style.flex = '1';
+    label.style.overflow = 'hidden';
+    label.style.textOverflow = 'ellipsis';
+    label.style.whiteSpace = 'nowrap';
+    label.style.fontSize = '12px';
+    label.innerText = item.filename;
+
+    const sizeSpan = document.createElement('span');
+    sizeSpan.style.fontSize = '10px';
+    sizeSpan.style.color = 'var(--text-muted)';
+    sizeSpan.innerText = formatBytes(item.size_bytes);
+
+    row.appendChild(chk);
+    row.appendChild(label);
+    row.appendChild(sizeSpan);
+
+    row.addEventListener('click', () => {
+      activePreviewPhotoPath = item.abs_path;
+      renderWatermarkPhotoList();
+      triggerWatermarkPreview();
+    });
+
+    fragment.appendChild(row);
+  });
+
+  listEl.appendChild(fragment);
+  updateWatermarkSelectCounts();
+}
+
+function updateWatermarkSelectCounts() {
+  const countEl = document.getElementById('lbl-watermark-count');
+  if (countEl) {
+    countEl.innerText = `${selectedProofingPaths.size} of ${proofingPhotos.length} selected`;
+  }
+}
+
+// Select All / None & Filter
+const btnWatermarkSelAll = document.getElementById('btn-watermark-sel-all');
+if (btnWatermarkSelAll) {
+  btnWatermarkSelAll.addEventListener('click', () => {
+    proofingPhotos.forEach(p => selectedProofingPaths.add(p.abs_path));
+    renderWatermarkPhotoList();
+  });
+}
+
+const btnWatermarkSelNone = document.getElementById('btn-watermark-sel-none');
+if (btnWatermarkSelNone) {
+  btnWatermarkSelNone.addEventListener('click', () => {
+    selectedProofingPaths.clear();
+    renderWatermarkPhotoList();
+  });
+}
+
+const txtWatermarkFilter = document.getElementById('txt-watermark-filter');
+if (txtWatermarkFilter) {
+  txtWatermarkFilter.addEventListener('input', () => {
+    renderWatermarkPhotoList();
+  });
+}
+
+// Live Interactive Watermark Preview
+async function triggerWatermarkPreview(targetPath) {
+  const filePath = targetPath || activePreviewPhotoPath;
+  if (!filePath) return;
+
+  const previewImg = document.getElementById('img-watermark-live');
+  const placeholder = document.getElementById('preview-placeholder');
+  const sampleName = document.getElementById('lbl-preview-sample-name');
+
+  if (sampleName) {
+    const pParts = filePath.replace(/\\/g, '/').split('/');
+    sampleName.innerText = pParts[pParts.length - 1];
+  }
+
+  const mode = document.getElementById('sel-watermark-mode')?.value || 'text';
+  const textStr = document.getElementById('txt-watermark-string')?.value || 'PROOF ONLY';
+  const pos = document.getElementById('sel-watermark-pos')?.value || 'diagonal_grid';
+  const opacity = (parseFloat(document.getElementById('rng-watermark-opacity')?.value || '35')) / 100;
+  const fontScale = (parseFloat(document.getElementById('rng-watermark-fontscale')?.value || '4')) / 100;
+  const colorHex = document.getElementById('col-watermark-color')?.value || '#FFFFFF';
+  const shadow = !!document.getElementById('chk-watermark-shadow')?.checked;
+
+  const logoPath = document.getElementById('txt-watermark-logo-path')?.value || '';
+  const logoPos = document.getElementById('sel-watermark-logo-pos')?.value || 'bottom-right';
+  const logoOpacity = (parseFloat(document.getElementById('rng-watermark-logo-opacity')?.value || '80')) / 100;
+  const logoScale = (parseFloat(document.getElementById('rng-watermark-logo-scale')?.value || '18')) / 100;
+
+  const config = {
+    watermark_type: mode,
+    text: textStr,
+    position: pos,
+    opacity: opacity,
+    font_scale: fontScale,
+    color_hex: colorHex,
+    shadow: shadow,
+    logo_path: logoPath,
+    logo_position: logoPos,
+    logo_opacity: logoOpacity,
+    logo_scale: logoScale
+  };
+
+  try {
+    const res = await fetch(API_BASE + '/api/proofing/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_path: filePath, config: config })
+    });
+    const data = await res.json();
+    if (res.ok && data.preview_data_url) {
+      if (previewImg) {
+        previewImg.src = data.preview_data_url;
+        previewImg.style.display = 'block';
+      }
+      if (placeholder) placeholder.style.display = 'none';
+    } else {
+      if (placeholder) {
+        placeholder.innerText = 'Preview error: ' + (data.detail || 'Could not generate');
+        placeholder.style.display = 'block';
+      }
+      if (previewImg) previewImg.style.display = 'none';
+    }
+  } catch (err) {
+    if (placeholder) {
+      placeholder.innerText = 'Preview failed: ' + err;
+      placeholder.style.display = 'block';
+    }
+  }
+}
+
+const btnPreviewRefresh = document.getElementById('btn-preview-refresh');
+if (btnPreviewRefresh) {
+  btnPreviewRefresh.addEventListener('click', () => triggerWatermarkPreview());
+}
+
+// Destination Mode Switcher Controls
+const selWatermarkOutMode = document.getElementById('sel-watermark-out-mode');
+const boxSubfolderName = document.getElementById('box-subfolder-name');
+const selWatermarkSubfolderType = document.getElementById('sel-watermark-subfolder-type');
+const lblSubfolderNameLabel = document.getElementById('lbl-subfolder-name-label');
+const boxWatermarkCustomDest = document.getElementById('box-watermark-custom-dest');
+const txtSubfolderName = document.getElementById('txt-watermark-subfolder-name');
+const lblDestHint = document.getElementById('lbl-dest-hint');
+
+function computeSubfolderName(rawName, folderType, parentName = 'foldername') {
+  const clean = (rawName || '_proofs').trim().replace(/^[/\\]+|[/\\]+$/g, '');
+  if (folderType === 'prefix') {
+    const sep = (clean.endsWith('_') || clean.endsWith('-') || clean.endsWith(' ')) ? '' : '_';
+    return `${clean}${sep}${parentName}`;
+  } else if (folderType === 'suffix') {
+    const sep = (clean.startsWith('_') || clean.startsWith('-') || clean.startsWith(' ')) ? '' : '_';
+    return `${parentName}${sep}${clean}`;
+  } else {
+    return clean || '_proofs';
+  }
+}
+
+function updateDestModeUI() {
+  if (!selWatermarkOutMode) return;
+  const mode = selWatermarkOutMode.value;
+  const subType = selWatermarkSubfolderType?.value || 'suffix';
+  const subName = (txtSubfolderName?.value || '_proofs').trim();
+
+  if (lblSubfolderNameLabel) {
+    if (subType === 'prefix') lblSubfolderNameLabel.innerText = 'Folder Prefix:';
+    else if (subType === 'suffix') lblSubfolderNameLabel.innerText = 'Folder Postfix:';
+    else lblSubfolderNameLabel.innerText = 'Exact Name:';
+  }
+
+  if (mode === 'original_subfolder') {
+    if (boxSubfolderName) boxSubfolderName.style.display = 'flex';
+    if (boxWatermarkCustomDest) boxWatermarkCustomDest.style.display = 'none';
+
+    const sampleFolder = (customProofingFolders.length > 0 && customProofingFolders[0].label) ? customProofingFolders[0].label : 'foldername';
+    const previewName = computeSubfolderName(subName, subType, sampleFolder);
+
+    if (lblDestHint) {
+      if (subType === 'prefix') {
+        lblDestHint.innerHTML = `💡 Each photo will be saved in a prefixed subfolder: <code>${escapeHtml(previewName)}/</code> inside its respective original folder.`;
+      } else if (subType === 'suffix') {
+        lblDestHint.innerHTML = `💡 Each photo will be saved in a postfixed subfolder: <code>${escapeHtml(previewName)}/</code> inside its respective original folder.`;
+      } else {
+        lblDestHint.innerHTML = `💡 Each photo will be saved in an exact subfolder: <code>${escapeHtml(previewName)}/</code> inside its respective original folder.`;
+      }
+    }
+  } else if (mode === 'original_folder') {
+    if (boxSubfolderName) boxSubfolderName.style.display = 'none';
+    if (boxWatermarkCustomDest) boxWatermarkCustomDest.style.display = 'none';
+    if (lblDestHint) lblDestHint.innerHTML = '💡 Each photo will be saved directly alongside its original file with suffix (e.g. <code>photo_proof.jpg</code>).';
+  } else if (mode === 'custom_dir') {
+    if (boxSubfolderName) boxSubfolderName.style.display = 'none';
+    if (boxWatermarkCustomDest) boxWatermarkCustomDest.style.display = 'flex';
+    if (lblDestHint) lblDestHint.innerHTML = '💡 All photos will be saved into the single custom destination folder selected above.';
+  }
+}
+
+if (selWatermarkOutMode) {
+  selWatermarkOutMode.addEventListener('change', updateDestModeUI);
+}
+if (selWatermarkSubfolderType) {
+  selWatermarkSubfolderType.addEventListener('change', updateDestModeUI);
+}
+if (txtSubfolderName) {
+  txtSubfolderName.addEventListener('input', updateDestModeUI);
+}
+
+// Start Batch Watermark Export
+const btnStartWatermarkBatch = document.getElementById('btn-start-watermark-batch');
+if (btnStartWatermarkBatch) {
+  btnStartWatermarkBatch.addEventListener('click', async () => {
+    const outMode = document.getElementById('sel-watermark-out-mode')?.value || 'original_subfolder';
+    const subfolderName = document.getElementById('txt-watermark-subfolder-name')?.value.trim() || '_proofs';
+    const subfolderType = document.getElementById('sel-watermark-subfolder-type')?.value || 'suffix';
+    const destDir = document.getElementById('txt-watermark-dest')?.value.trim();
+
+    if (outMode === 'custom_dir' && !destDir) {
+      showToast('Please specify a destination folder for watermarked proofs!', 'error');
+      document.getElementById('txt-watermark-dest')?.focus();
+      return;
+    }
+
+    const filesToWatermark = proofingPhotos.filter(p => selectedProofingPaths.has(p.abs_path));
+    if (filesToWatermark.length === 0) {
+      showToast('Please select at least 1 photo to watermark!', 'error');
+      return;
+    }
+
+    const mode = document.getElementById('sel-watermark-mode')?.value || 'text';
+    const textStr = document.getElementById('txt-watermark-string')?.value || 'PROOF ONLY';
+    const pos = document.getElementById('sel-watermark-pos')?.value || 'diagonal_grid';
+    const opacity = (parseFloat(document.getElementById('rng-watermark-opacity')?.value || '35')) / 100;
+    const fontScale = (parseFloat(document.getElementById('rng-watermark-fontscale')?.value || '4')) / 100;
+    const colorHex = document.getElementById('col-watermark-color')?.value || '#FFFFFF';
+    const shadow = !!document.getElementById('chk-watermark-shadow')?.checked;
+
+    const logoPath = document.getElementById('txt-watermark-logo-path')?.value || '';
+    const logoPos = document.getElementById('sel-watermark-logo-pos')?.value || 'bottom-right';
+    const logoOpacity = (parseFloat(document.getElementById('rng-watermark-logo-opacity')?.value || '80')) / 100;
+    const logoScale = (parseFloat(document.getElementById('rng-watermark-logo-scale')?.value || '18')) / 100;
+
+    const maxDim = parseInt(document.getElementById('sel-watermark-res')?.value || '2048');
+    const quality = parseInt(document.getElementById('rng-watermark-quality')?.value || '80');
+    const suffix = document.getElementById('txt-watermark-suffix')?.value || '_proof';
+
+    const config = {
+      watermark_type: mode,
+      text: textStr,
+      position: pos,
+      opacity: opacity,
+      font_scale: fontScale,
+      color_hex: colorHex,
+      shadow: shadow,
+      logo_path: logoPath,
+      logo_position: logoPos,
+      logo_opacity: logoOpacity,
+      logo_scale: logoScale,
+      max_dimension: maxDim,
+      quality: quality
+    };
+
+    try {
+      showToast(`Starting watermark export for ${filesToWatermark.length} photos...`, 'info');
+      const res = await fetch(API_BASE + '/api/proofing/batch_watermark', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          file_ids: filesToWatermark.map(f => f.id).filter(Boolean),
+          file_paths: filesToWatermark.map(f => f.abs_path),
+          output_dir: outMode === 'custom_dir' ? destDir : null,
+          output_mode: outMode,
+          subfolder_name: subfolderName,
+          subfolder_type: subfolderType,
+          suffix: suffix,
+          config: config
+        })
+      });
+      let data = {};
+      try {
+        data = await res.json();
+      } catch (e) {
+        data = { detail: res.statusText || 'Server error' };
+      }
+      if (!res.ok) {
+        showToast('Error starting batch: ' + (data.detail || 'Failed'), 'error');
+        return;
+      }
+
+      // Show progress box
+      const progBox = document.getElementById('box-watermark-progress');
+      if (progBox) progBox.style.display = 'block';
+
+      startWatermarkProgressPolling(outMode, destDir, filesToWatermark[0]?.abs_path, subfolderName, subfolderType);
+    } catch (e) {
+      showToast('Batch error: ' + e, 'error');
+    }
+  });
+}
+
+function startWatermarkProgressPolling(outMode, destDir, sampleFilePath, subfolderName, subfolderType = 'suffix') {
+  clearInterval(watermarkBatchInterval);
+  watermarkBatchInterval = setInterval(async () => {
+    try {
+      const statusRes = await fetch(API_BASE + '/api/proofing/batch_status').then(r => r.json());
+      const bar = document.getElementById('bar-watermark-prog-fill');
+      const pct = document.getElementById('lbl-batch-prog-pct');
+      const curFile = document.getElementById('lbl-batch-prog-current');
+      const counter = document.getElementById('lbl-batch-prog-counter');
+      const title = document.getElementById('lbl-batch-prog-title');
+
+      if (bar) bar.style.width = statusRes.percent + '%';
+      if (pct) pct.innerText = statusRes.percent + '%';
+      if (curFile) curFile.innerText = statusRes.current_file || 'Processing...';
+      if (counter) counter.innerText = `${statusRes.completed} / ${statusRes.total}`;
+
+      if (!statusRes.is_running) {
+        clearInterval(watermarkBatchInterval);
+        if (title) title.innerText = 'Batch Completed!';
+        showToast(`Watermarking finished! ${statusRes.completed} photos exported.`, 'success');
+        setTimeout(() => {
+          if (outMode === 'custom_dir' && destDir) {
+            openFileLocation(destDir, true);
+          } else if (sampleFilePath) {
+            const parts = sampleFilePath.replace(/\\/g, '/').split('/');
+            parts.pop(); // remove photo filename
+            const parentName = parts[parts.length - 1] || 'folder';
+            const baseDir = parts.join('/');
+            let targetOpenDir = baseDir;
+            if (outMode === 'original_subfolder') {
+              const actualSub = computeSubfolderName(subfolderName, subfolderType, parentName);
+              targetOpenDir = `${baseDir}/${actualSub}`;
+            }
+            openFileLocation(targetOpenDir, true);
+          }
+        }, 1200);
+      }
+    } catch (e) {
+      console.error('Polling status error:', e);
+    }
+  }, 600);
+}
+
+const btnCancelWatermarkBatch = document.getElementById('btn-cancel-watermark-batch');
+if (btnCancelWatermarkBatch) {
+  btnCancelWatermarkBatch.addEventListener('click', async () => {
+    try {
+      await fetch(API_BASE + '/api/proofing/cancel_batch', { method: 'POST' });
+      showToast('Cancelling watermark batch...', 'info');
+    } catch (e) {
+      console.error(e);
+    }
+  });
+}
+
+// Generate Client Contact Sheet
+const btnGenContactSheet = document.getElementById('btn-generate-contact-sheet');
+if (btnGenContactSheet) {
+  btnGenContactSheet.addEventListener('click', async () => {
+    const destDir = document.getElementById('txt-contact-dest')?.value.trim();
+    if (!destDir) {
+      showToast('Please specify an output folder for the Contact Sheet package!', 'error');
+      document.getElementById('txt-contact-dest')?.focus();
+      return;
+    }
+
+    const title = document.getElementById('txt-contact-title')?.value.trim() || 'Client Proofing Gallery';
+    const client = document.getElementById('txt-contact-client')?.value.trim() || 'Valued Client';
+    const instructions = document.getElementById('txt-contact-instructions')?.value.trim();
+    const watermarkText = document.getElementById('txt-contact-watermark')?.value.trim() || 'PROOF ONLY';
+
+    const files = proofingPhotos.filter(p => selectedProofingPaths.has(p.abs_path));
+    const targetFiles = files.length > 0 ? files : proofingPhotos;
+
+    if (targetFiles.length === 0) {
+      showToast('Please select photos or load a shoot folder first in Tab 1!', 'error');
+      return;
+    }
+
+    try {
+      showToast(`Generating client contact sheet package for ${targetFiles.length} photos...`, 'info');
+      btnGenContactSheet.disabled = true;
+      btnGenContactSheet.innerText = '⏳ Building Contact Sheet Package...';
+
+      const res = await fetch(API_BASE + '/api/proofing/generate_contact_sheet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          file_ids: targetFiles.map(f => f.id).filter(Boolean),
+          file_paths: targetFiles.map(f => f.abs_path),
+          source_dir: targetFiles.every(f => !f.id) ? document.getElementById('txt-watermark-custom-dir')?.value : null,
+          output_dir: destDir,
+          project_title: title,
+          client_name: client,
+          instructions: instructions,
+          watermark_text: watermarkText
+        })
+      });
+      const data = await res.json();
+      btnGenContactSheet.disabled = false;
+      btnGenContactSheet.innerText = '📑 Generate Standalone Client Contact Sheet';
+
+      if (!res.ok) {
+        showToast('Error: ' + (data.detail || 'Failed to generate contact sheet'), 'error');
+        return;
+      }
+
+      lastGeneratedContactSheetHtml = data.html_path;
+      const resBox = document.getElementById('box-contact-result');
+      const resPath = document.getElementById('lbl-contact-result-path');
+      if (resBox) resBox.style.display = 'block';
+      if (resPath) resPath.innerText = data.html_path;
+
+      showToast('🎉 Standalone client gallery generated successfully!', 'success');
+    } catch (e) {
+      btnGenContactSheet.disabled = false;
+      btnGenContactSheet.innerText = '📑 Generate Standalone Client Contact Sheet';
+      showToast('Failed to generate contact sheet: ' + e, 'error');
+    }
+  });
+}
+
+const btnOpenContactBrowser = document.getElementById('btn-open-contact-browser');
+if (btnOpenContactBrowser) {
+  btnOpenContactBrowser.addEventListener('click', () => {
+    if (lastGeneratedContactSheetHtml) {
+      openFileLocation(lastGeneratedContactSheetHtml, false);
+    }
+  });
+}
+
+const btnRevealContactExplorer = document.getElementById('btn-reveal-contact-explorer');
+if (btnRevealContactExplorer) {
+  btnRevealContactExplorer.addEventListener('click', () => {
+    const destDir = document.getElementById('txt-contact-dest')?.value.trim();
+    if (destDir) {
+      openFileLocation(destDir, true);
+    }
+  });
+}
+
+// Client Selects Resolver & Exporter
+const btnResolveSelects = document.getElementById('btn-resolve-selects');
+if (btnResolveSelects) {
+  btnResolveSelects.addEventListener('click', async () => {
+    const inputStr = document.getElementById('txt-selects-input')?.value.trim();
+    if (!inputStr) {
+      showToast('Please paste the client\'s selections list first!', 'error');
+      return;
+    }
+
+    const srcDir = document.getElementById('txt-selects-source-dir')?.value.trim() || document.getElementById('txt-watermark-custom-dir')?.value.trim();
+    const selSrcId = document.getElementById('sel-watermark-source')?.value || null;
+
+    try {
+      showToast('Resolving selections against shoot files...', 'info');
+      const res = await fetch(API_BASE + '/api/proofing/resolve_selects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_input: inputStr,
+          source_dir: srcDir || null,
+          source_id: selSrcId ? parseInt(selSrcId) : null
+        })
+      });
+      const data = await res.json();
+      lastResolvedSelects = data;
+
+      // Stats
+      const statsBox = document.getElementById('box-selects-stats');
+      if (statsBox) {
+        statsBox.innerHTML = `<span style="color:var(--accent-emerald);">Matched: ${data.matched_count}</span> | <span style="color:${data.unmatched_count > 0 ? 'var(--accent-rose)' : 'var(--text-muted)'};">Missing: ${data.unmatched_count}</span> | Match Rate: <strong style="color:var(--accent-cyan);">${data.match_rate_pct}%</strong>`;
+      }
+
+      // Unmatched warning
+      const warnBox = document.getElementById('box-selects-unmatched');
+      if (warnBox) {
+        if (data.unmatched_count > 0) {
+          warnBox.style.display = 'block';
+          warnBox.innerHTML = `<strong>⚠️ ${data.unmatched_count} items not found in source folder:</strong> ${escapeHtml(data.unmatched.join(', '))}`;
+        } else {
+          warnBox.style.display = 'none';
+        }
+      }
+
+      // Matched Grid
+      const grid = document.getElementById('selects-matched-grid');
+      if (grid) {
+        grid.innerHTML = '';
+        if (data.matched.length === 0) {
+          grid.innerHTML = '<p style="grid-column: 1/-1; text-align: center; color: var(--accent-rose); font-size: 13px; margin-top: 40px;">No matching photos found for these entries.</p>';
+        } else {
+          data.matched.forEach((m, idx) => {
+            const card = document.createElement('div');
+            card.style.background = 'var(--bg-secondary)';
+            card.style.border = '1px solid var(--border-color)';
+            card.style.borderRadius = '8px';
+            card.style.padding = '8px';
+            card.style.display = 'flex';
+            card.style.flexDirection = 'column';
+            card.style.gap = '4px';
+
+            const badgeSidecar = m.sidecar_path ? '<span style="background:rgba(16,185,129,0.2); color:var(--accent-emerald); font-size:9px; padding:1px 4px; border-radius:3px;">+XMP</span>' : '';
+
+            card.innerHTML = `
+              <div style="font-size:11px; font-weight:700; color:var(--text-main); word-break:break-all;">
+                #${idx + 1} ${escapeHtml(m.filename)} ${badgeSidecar}
+              </div>
+              <div style="font-size:10px; color:var(--text-muted); display:flex; justify-content:space-between;">
+                <span>${formatBytes(m.size_bytes)}</span>
+                <span style="color:var(--accent-cyan);">Query: ${escapeHtml(m.query)}</span>
+              </div>
+            `;
+            grid.appendChild(card);
+          });
+        }
+      }
+
+      // Actions Box
+      const actionsBox = document.getElementById('box-selects-actions');
+      if (actionsBox) {
+        actionsBox.style.display = data.matched.length > 0 ? 'flex' : 'none';
+      }
+    } catch (e) {
+      showToast('Failed to resolve selections: ' + e, 'error');
+    }
+  });
+}
+
+const btnExportSelectsAction = document.getElementById('btn-execute-selects-export');
+if (btnExportSelectsAction) {
+  btnExportSelectsAction.addEventListener('click', async () => {
+    if (!lastResolvedSelects || !lastResolvedSelects.matched || lastResolvedSelects.matched.length === 0) {
+      showToast('No matched selections to export!', 'error');
+      return;
+    }
+
+    const destDir = document.getElementById('txt-selects-dest-dir')?.value.trim();
+    if (!destDir) {
+      showToast('Please specify a destination edit folder!', 'error');
+      document.getElementById('txt-selects-dest-dir')?.focus();
+      return;
+    }
+
+    const action = document.querySelector('input[name="rad-selects-action"]:checked')?.value || 'copy';
+
+    try {
+      showToast(`Exporting ${lastResolvedSelects.matched.length} selects...`, 'info');
+      const res = await fetch(API_BASE + '/api/proofing/export_selects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          matched_items: lastResolvedSelects.matched,
+          destination_dir: destDir,
+          action: action
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast('Export error: ' + (data.detail || 'Failed to export'), 'error');
+        return;
+      }
+
+      showToast(`Successfully transferred ${data.processed_count} files (${formatBytes(data.total_bytes)}) to edit folder!`, 'success');
+      setTimeout(() => openFileLocation(destDir, true), 800);
+    } catch (e) {
+      showToast('Export failed: ' + e, 'error');
+    }
+  });
+}
+
+const btnCopySelectsFilenames = document.getElementById('btn-copy-selects-filenames');
+if (btnCopySelectsFilenames) {
+  btnCopySelectsFilenames.addEventListener('click', () => {
+    if (!lastResolvedSelects || !lastResolvedSelects.matched || lastResolvedSelects.matched.length === 0) {
+      showToast('No resolved selections to copy!', 'error');
+      return;
+    }
+    const list = lastResolvedSelects.matched.map(m => m.filename).join(', ');
+    navigator.clipboard.writeText(list).then(() => {
+      showToast(`Copied ${lastResolvedSelects.matched.length} filenames to clipboard!`, 'success');
+    });
+  });
+}
+
+// Global initialization
 setupContextMenu();
 loadOverview();
+restoreSessionState();
 
 setInterval(() => {
   if (currentTab === 'transcoder') {
     loadTranscoder();
   }
 }, 3000);
+
+// ----------------- SESSION PERSISTENCE & RESTORATION -----------------
+let sessionSaveDebounceTimer = null;
+let isRestoringSession = false;
+
+function collectCurrentSessionState() {
+  const mode = document.getElementById('sel-watermark-mode')?.value || 'text';
+  const textStr = document.getElementById('txt-watermark-string')?.value || 'PROOF ONLY';
+  const pos = document.getElementById('sel-watermark-pos')?.value || 'diagonal_grid';
+  const opacity = parseInt(document.getElementById('rng-watermark-opacity')?.value || '35');
+  const fontScale = parseInt(document.getElementById('rng-watermark-fontscale')?.value || '4');
+  const colorHex = document.getElementById('col-watermark-color')?.value || '#FFFFFF';
+  const shadow = !!document.getElementById('chk-watermark-shadow')?.checked;
+
+  const logoPath = document.getElementById('txt-watermark-logo-path')?.value || '';
+  const logoPos = document.getElementById('sel-watermark-logo-pos')?.value || 'bottom-right';
+  const logoOpacity = parseInt(document.getElementById('rng-watermark-logo-opacity')?.value || '80');
+  const logoScale = parseInt(document.getElementById('rng-watermark-logo-scale')?.value || '18');
+
+  const resolution = parseInt(document.getElementById('rng-watermark-res')?.value || '2048');
+  const isOrigRes = !!document.getElementById('chk-watermark-orig-res')?.checked;
+  const quality = parseInt(document.getElementById('rng-watermark-quality')?.value || '80');
+  const outMode = document.getElementById('sel-watermark-out-mode')?.value || 'original_subfolder';
+  const subfolderName = document.getElementById('txt-watermark-subfolder-name')?.value || '_proofs';
+  const customDest = document.getElementById('txt-watermark-dest')?.value || '';
+  const suffix = document.getElementById('txt-watermark-suffix')?.value || '_proof';
+
+  return {
+    last_active_tab: currentTab,
+    last_proofing_subview: currentProofingSubview,
+    custom_folders: customProofingFolders.map(f => ({
+      path: f.path,
+      label: f.label,
+      checked: !!f.checked,
+      recursive: f.recursive !== false
+    })),
+    watermark_settings: {
+      mode: mode,
+      text: textStr,
+      position: pos,
+      opacity: opacity,
+      font_scale: fontScale,
+      color_hex: colorHex,
+      shadow: shadow,
+      logo_path: logoPath,
+      logo_position: logoPos,
+      logo_opacity: logoOpacity,
+      logo_scale: logoScale,
+      resolution: resolution,
+      is_original_res: isOrigRes,
+      quality: quality,
+      output_mode: outMode,
+      subfolder_name: subfolderName,
+      subfolder_type: document.getElementById('sel-watermark-subfolder-type')?.value || 'suffix',
+      custom_dest: customDest,
+      suffix: suffix
+    },
+    contact_sheet_settings: {
+      title: document.getElementById('txt-contact-title')?.value || '',
+      client: document.getElementById('txt-contact-client')?.value || '',
+      instructions: document.getElementById('txt-contact-instructions')?.value || '',
+      watermark_text: document.getElementById('txt-contact-watermark')?.value || '',
+      dest_dir: document.getElementById('txt-contact-dest')?.value || ''
+    },
+    selects_settings: {
+      input: document.getElementById('txt-selects-input')?.value || '',
+      source_dir: document.getElementById('txt-selects-source-dir')?.value || '',
+      dest_dir: document.getElementById('txt-selects-dest-dir')?.value || '',
+      action: document.querySelector('input[name="rad-selects-action"]:checked')?.value || 'copy'
+    }
+  };
+}
+
+function debouncedSaveSessionState(extraOverrides = {}) {
+  if (isRestoringSession) return;
+  clearTimeout(sessionSaveDebounceTimer);
+  sessionSaveDebounceTimer = setTimeout(async () => {
+    try {
+      const state = { ...collectCurrentSessionState(), ...extraOverrides };
+      await fetch(API_BASE + '/api/session/state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(state)
+      });
+    } catch (e) {
+      console.warn('Could not save session state:', e);
+    }
+  }, 400);
+}
+
+async function restoreSessionState() {
+  isRestoringSession = true;
+  try {
+    const res = await fetch(API_BASE + '/api/session/state');
+    if (!res.ok) return;
+    const state = await res.json();
+    if (!state) return;
+
+    // 1. Watermark settings
+    if (state.watermark_settings) {
+      const ws = state.watermark_settings;
+      const elMode = document.getElementById('sel-watermark-mode');
+      if (elMode && ws.mode) {
+        elMode.value = ws.mode;
+        const boxText = document.getElementById('box-watermark-text');
+        const boxLogo = document.getElementById('box-watermark-logo');
+        if (boxText) boxText.style.display = (ws.mode === 'text' || ws.mode === 'both') ? 'flex' : 'none';
+        if (boxLogo) boxLogo.style.display = (ws.mode === 'logo' || ws.mode === 'both') ? 'flex' : 'none';
+      }
+      if (ws.text !== undefined && document.getElementById('txt-watermark-string')) {
+        document.getElementById('txt-watermark-string').value = ws.text;
+      }
+      if (ws.position && document.getElementById('sel-watermark-pos')) {
+        document.getElementById('sel-watermark-pos').value = ws.position;
+      }
+      if (ws.opacity !== undefined && document.getElementById('rng-watermark-opacity')) {
+        document.getElementById('rng-watermark-opacity').value = ws.opacity;
+        if (lblValOpacity) lblValOpacity.innerText = ws.opacity + '%';
+      }
+      if (ws.font_scale !== undefined && document.getElementById('rng-watermark-fontscale')) {
+        document.getElementById('rng-watermark-fontscale').value = ws.font_scale;
+        if (lblValFontScale) lblValFontScale.innerText = ws.font_scale + '%';
+      }
+      if (ws.color_hex && document.getElementById('col-watermark-color')) {
+        document.getElementById('col-watermark-color').value = ws.color_hex;
+      }
+      if (ws.shadow !== undefined && document.getElementById('chk-watermark-shadow')) {
+        document.getElementById('chk-watermark-shadow').checked = !!ws.shadow;
+      }
+      if (ws.logo_path !== undefined && document.getElementById('txt-watermark-logo-path')) {
+        document.getElementById('txt-watermark-logo-path').value = ws.logo_path;
+      }
+      if (ws.logo_position && document.getElementById('sel-watermark-logo-pos')) {
+        document.getElementById('sel-watermark-logo-pos').value = ws.logo_position;
+      }
+      if (ws.logo_opacity !== undefined && document.getElementById('rng-watermark-logo-opacity')) {
+        document.getElementById('rng-watermark-logo-opacity').value = ws.logo_opacity;
+        if (lblValLogoOpacity) lblValLogoOpacity.innerText = ws.logo_opacity + '%';
+      }
+      if (ws.logo_scale !== undefined && document.getElementById('rng-watermark-logo-scale')) {
+        document.getElementById('rng-watermark-logo-scale').value = ws.logo_scale;
+        if (lblValLogoScale) lblValLogoScale.innerText = ws.logo_scale + '%';
+      }
+      if (ws.quality !== undefined && document.getElementById('rng-watermark-quality')) {
+        document.getElementById('rng-watermark-quality').value = ws.quality;
+        if (lblValQuality) lblValQuality.innerText = ws.quality + '%';
+      }
+      if (ws.output_mode && document.getElementById('sel-watermark-out-mode')) {
+        document.getElementById('sel-watermark-out-mode').value = ws.output_mode;
+      }
+      if (ws.subfolder_name !== undefined && document.getElementById('txt-watermark-subfolder-name')) {
+        document.getElementById('txt-watermark-subfolder-name').value = ws.subfolder_name;
+      }
+      if (ws.subfolder_type !== undefined && document.getElementById('sel-watermark-subfolder-type')) {
+        document.getElementById('sel-watermark-subfolder-type').value = ws.subfolder_type;
+      }
+      if (ws.custom_dest !== undefined && document.getElementById('txt-watermark-dest')) {
+        document.getElementById('txt-watermark-dest').value = ws.custom_dest;
+      }
+      if (ws.suffix !== undefined && document.getElementById('txt-watermark-suffix')) {
+        document.getElementById('txt-watermark-suffix').value = ws.suffix;
+      }
+
+      // Resolution & Slider
+      updateResUI(ws.resolution || 2048, !!ws.is_original_res);
+      updateDestModeUI();
+    }
+
+    // 2. Custom Folders Checklist
+    if (Array.isArray(state.custom_folders) && state.custom_folders.length > 0) {
+      customProofingFolders = state.custom_folders;
+      renderCustomFoldersList();
+      loadPhotosFromActiveFolders();
+    }
+
+    // 3. Contact Sheet Settings
+    if (state.contact_sheet_settings) {
+      const cs = state.contact_sheet_settings;
+      if (cs.title && document.getElementById('txt-contact-title')) document.getElementById('txt-contact-title').value = cs.title;
+      if (cs.client && document.getElementById('txt-contact-client')) document.getElementById('txt-contact-client').value = cs.client;
+      if (cs.instructions && document.getElementById('txt-contact-instructions')) document.getElementById('txt-contact-instructions').value = cs.instructions;
+      if (cs.watermark_text && document.getElementById('txt-contact-watermark')) document.getElementById('txt-contact-watermark').value = cs.watermark_text;
+      if (cs.dest_dir && document.getElementById('txt-contact-dest')) document.getElementById('txt-contact-dest').value = cs.dest_dir;
+    }
+
+    // 4. Selects Settings
+    if (state.selects_settings) {
+      const ss = state.selects_settings;
+      if (ss.input && document.getElementById('txt-selects-input')) document.getElementById('txt-selects-input').value = ss.input;
+      if (ss.source_dir && document.getElementById('txt-selects-source-dir')) document.getElementById('txt-selects-source-dir').value = ss.source_dir;
+      if (ss.dest_dir && document.getElementById('txt-selects-dest-dir')) document.getElementById('txt-selects-dest-dir').value = ss.dest_dir;
+      if (ss.action) {
+        const rad = document.querySelector(`input[name="rad-selects-action"][value="${ss.action}"]`);
+        if (rad) rad.checked = true;
+      }
+    }
+
+    // 5. Last Task Banner
+    if (state.last_task && state.last_task.task_type && state.last_task.task_type !== 'none') {
+      const banner = document.getElementById('session-last-task-banner');
+      const textEl = document.getElementById('session-last-task-text');
+      if (banner && textEl) {
+        banner.style.display = 'inline-flex';
+        const formatted = state.last_task.formatted_time ? ` (${state.last_task.formatted_time})` : '';
+        textEl.innerText = `${state.last_task.summary}${formatted}`;
+        textEl.title = `${state.last_task.summary}${formatted}`;
+      }
+    }
+
+    // 6. Active Tab & Subview
+    if (state.last_active_tab && state.last_active_tab !== 'overview') {
+      switchTab(state.last_active_tab);
+    }
+    if (state.last_proofing_subview) {
+      switchProofingSubview(state.last_proofing_subview);
+    }
+  } catch (err) {
+    console.warn('Failed restoring session state:', err);
+  } finally {
+    isRestoringSession = false;
+  }
+}
+
+// ----------------- APPLICATION LOGS VIEWER -----------------
+const modalAppLogs = document.getElementById('modal-app-logs');
+const btnShowLogsModal = document.getElementById('btn-show-logs-modal');
+const btnRefreshLogs = document.getElementById('btn-refresh-logs');
+const btnOpenLogsFolder = document.getElementById('btn-open-logs-folder');
+const preLogsContent = document.getElementById('pre-logs-content');
+const lblLogsPath = document.getElementById('lbl-logs-path');
+const lblLogsSize = document.getElementById('lbl-logs-size');
+
+async function fetchAndDisplayRecentLogs() {
+  if (!preLogsContent) return;
+  try {
+    preLogsContent.textContent = 'Loading logs from server...';
+    const res = await fetch(API_BASE + '/api/logs/recent?lines=200');
+    const data = await res.json();
+    if (lblLogsPath && data.path) lblLogsPath.textContent = data.path;
+    if (lblLogsSize) lblLogsSize.textContent = formatBytes(data.size_bytes || 0);
+
+    if (data.lines && data.lines.length > 0) {
+      preLogsContent.textContent = data.lines.join('\n');
+    } else {
+      preLogsContent.textContent = 'Log file is empty.';
+    }
+    preLogsContent.scrollTop = preLogsContent.scrollHeight;
+  } catch (err) {
+    preLogsContent.textContent = 'Error fetching logs: ' + err;
+  }
+}
+
+if (btnShowLogsModal) {
+  btnShowLogsModal.addEventListener('click', () => {
+    if (modalAppLogs) {
+      modalAppLogs.classList.add('active');
+      fetchAndDisplayRecentLogs();
+    }
+  });
+}
+
+if (btnRefreshLogs) {
+  btnRefreshLogs.addEventListener('click', fetchAndDisplayRecentLogs);
+}
+
+if (btnOpenLogsFolder) {
+  btnOpenLogsFolder.addEventListener('click', async () => {
+    try {
+      showToast('Opening logs folder in File Explorer...', 'info');
+      const res = await fetch(API_BASE + '/api/logs/open', { method: 'POST' });
+      if (res.ok) {
+        showToast('Logs folder opened in Explorer', 'success');
+      } else {
+        showToast('Could not open logs folder', 'error');
+      }
+    } catch (e) {
+      showToast('Error opening logs: ' + e, 'error');
+    }
+  });
+}
+
+// Attach auto-save listeners to all proofing inputs
+[
+  'txt-watermark-string', 'sel-watermark-pos', 'rng-watermark-opacity',
+  'rng-watermark-fontscale', 'col-watermark-color', 'chk-watermark-shadow',
+  'txt-watermark-logo-path', 'sel-watermark-logo-pos', 'rng-watermark-logo-opacity',
+  'rng-watermark-logo-scale', 'sel-watermark-mode', 'rng-watermark-res',
+  'chk-watermark-orig-res', 'rng-watermark-quality', 'sel-watermark-out-mode',
+  'sel-watermark-subfolder-type', 'txt-watermark-subfolder-name', 'txt-watermark-dest', 'txt-watermark-suffix',
+  'txt-contact-title', 'txt-contact-client', 'txt-contact-instructions',
+  'txt-contact-watermark', 'txt-contact-dest', 'txt-selects-input',
+  'txt-selects-source-dir', 'txt-selects-dest-dir'
+].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) {
+    el.addEventListener('input', () => debouncedSaveSessionState());
+    el.addEventListener('change', () => debouncedSaveSessionState());
+  }
+});
+document.querySelectorAll('input[name="rad-selects-action"]').forEach(rad => {
+  rad.addEventListener('change', () => debouncedSaveSessionState());
+});
