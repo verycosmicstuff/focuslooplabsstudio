@@ -24,9 +24,9 @@
 - `TECH_DOCUMENTATION.md`: Complete living technical specification, ER diagram, algorithms, and API catalog.
 
 ## Recent Changes
+- Selects & Previews: Added Universal Lightbox modal, photo thumbnails in matched selects, and uncapped 500+ folder scanning.
 - Duplicate Grouping: Added folder-pair cluster grouping, folder-specific batch selectors, real-time filtering, and "Select None" button.
 - Proofing Presets: Added Watermark Presets System (+ Save Preset, Update, Delete) with built-in templates and live preview application.
-- Naming & Structure: Configurable subfolder naming styles (`suffix`, `prefix`, `custom`) and centralized proof folder isolation.
 - Desktop App & Session: Compiled `SaveSpace.exe` with single-instance mutex, rotating logger (`logs/savespace.log`), and session persistence.
 
 ## Active Objective

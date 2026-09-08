@@ -530,6 +530,13 @@ async function loadCuller(append = false) {
         }
       });
 
+      card.addEventListener('dblclick', () => {
+        const curIdx = cullingItems.findIndex(ci => ci.id === item.id);
+        if (curIdx >= 0) {
+          openUniversalPreviewModal({ items: cullingItems, currentIndex: curIdx });
+        }
+      });
+
       card.addEventListener('contextmenu', (e) => {
         showContextMenu(e, {
           filename: item.filename,
@@ -2772,13 +2779,8 @@ async function loadPhotosFromActiveFolders(forceSourceId) {
       const data = await res.json();
       proofingPhotos = data.photos || [];
     } else if (sourceId) {
-      const res = await fetch(API_BASE + `/api/culling?source_id=${sourceId}&limit=500`).then(r => r.json());
-      proofingPhotos = res.map(r => ({
-        id: r.id,
-        abs_path: r.abs_path,
-        filename: r.filename,
-        size_bytes: r.size_bytes
-      }));
+      const res = await fetch(API_BASE + `/api/sources/${sourceId}/photos`).then(r => r.json());
+      proofingPhotos = res.photos || [];
     }
 
     renderWatermarkPhotoList();
@@ -2975,6 +2977,20 @@ async function triggerWatermarkPreview(targetPath) {
 const btnPreviewRefresh = document.getElementById('btn-preview-refresh');
 if (btnPreviewRefresh) {
   btnPreviewRefresh.addEventListener('click', () => triggerWatermarkPreview());
+}
+
+const previewImgEl = document.getElementById('img-watermark-live');
+if (previewImgEl) {
+  previewImgEl.style.cursor = 'zoom-in';
+  previewImgEl.title = 'Click to open full-screen preview lightbox';
+  previewImgEl.addEventListener('click', () => {
+    if (activePreviewPhotoPath) {
+      openUniversalPreviewModal({
+        items: proofingPhotos.length > 0 ? proofingPhotos : [{ abs_path: activePreviewPhotoPath, filename: activePreviewPhotoPath.split(/[/\\]/).pop() }],
+        currentIndex: Math.max(0, proofingPhotos.findIndex(p => p.abs_path === activePreviewPhotoPath))
+      });
+    }
+  });
 }
 
 // Destination Mode Switcher Controls
@@ -3334,25 +3350,60 @@ if (btnResolveSelects) {
         } else {
           data.matched.forEach((m, idx) => {
             const card = document.createElement('div');
+            card.className = 'selects-card';
             card.style.background = 'var(--bg-secondary)';
             card.style.border = '1px solid var(--border-color)';
             card.style.borderRadius = '8px';
-            card.style.padding = '8px';
+            card.style.overflow = 'hidden';
             card.style.display = 'flex';
             card.style.flexDirection = 'column';
-            card.style.gap = '4px';
+            card.style.cursor = 'pointer';
+            card.style.position = 'relative';
+            card.style.transition = 'transform 0.15s, border-color 0.15s, box-shadow 0.15s';
 
-            const badgeSidecar = m.sidecar_path ? '<span style="background:rgba(16,185,129,0.2); color:var(--accent-emerald); font-size:9px; padding:1px 4px; border-radius:3px;">+XMP</span>' : '';
+            const thumbUrl = API_BASE + '/api/thumbnail_by_path?path=' + encodeURIComponent(m.abs_path);
+            const badgeSidecar = m.sidecar_path ? '<span style="background:rgba(16,185,129,0.3); color:var(--accent-emerald); font-size:9px; font-weight:700; padding:2px 5px; border-radius:3px;">+XMP</span>' : '';
 
             card.innerHTML = `
-              <div style="font-size:11px; font-weight:700; color:var(--text-main); word-break:break-all;">
-                #${idx + 1} ${escapeHtml(m.filename)} ${badgeSidecar}
+              <div class="selects-thumb-wrap" style="position:relative; width:100%; height:130px; background:#070b14; overflow:hidden; display:flex; align-items:center; justify-content:center;">
+                <img src="${thumbUrl}" alt="${escapeHtml(m.filename)}" loading="lazy" decoding="async" style="width:100%; height:100%; object-fit:cover; transition:transform 0.2s;" onerror="this.onerror=null; this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%231e293b%22/><text x=%2250%22 y=%2255%22 font-size=%2211%22 fill=%22%2394a3b8%22 text-anchor=%22middle%22>PHOTO</text></svg>';">
+                <div class="thumb-hover-overlay" style="position:absolute; inset:0; background:rgba(0,0,0,0.45); opacity:0; transition:opacity 0.2s; display:flex; align-items:center; justify-content:center; gap:6px;">
+                  <span style="background:rgba(6,182,212,0.9); color:#000; font-size:11px; font-weight:700; padding:4px 9px; border-radius:4px;">🔍 Preview</span>
+                </div>
+                <div style="position:absolute; top:6px; left:6px; background:rgba(0,0,0,0.7); color:#fff; font-size:10px; font-weight:700; padding:2px 6px; border-radius:4px;">
+                  #${idx + 1}
+                </div>
+                ${badgeSidecar ? `<div style="position:absolute; top:6px; right:6px;">${badgeSidecar}</div>` : ''}
               </div>
-              <div style="font-size:10px; color:var(--text-muted); display:flex; justify-content:space-between;">
-                <span>${formatBytes(m.size_bytes)}</span>
-                <span style="color:var(--accent-cyan);">Query: ${escapeHtml(m.query)}</span>
+              <div style="padding:8px; display:flex; flex-direction:column; gap:4px;">
+                <div style="font-size:11px; font-weight:700; color:var(--text-main); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(m.filename)}">
+                  ${escapeHtml(m.filename)}
+                </div>
+                <div style="font-size:10px; color:var(--text-muted); display:flex; justify-content:space-between; align-items:center;">
+                  <span>${formatBytes(m.size_bytes)}</span>
+                  <span style="color:var(--accent-cyan); font-family:monospace;">Query: ${escapeHtml(m.query)}</span>
+                </div>
               </div>
             `;
+
+            card.addEventListener('mouseenter', () => {
+              card.style.borderColor = 'var(--accent-cyan)';
+              const ov = card.querySelector('.thumb-hover-overlay');
+              if (ov) ov.style.opacity = '1';
+            });
+            card.addEventListener('mouseleave', () => {
+              card.style.borderColor = 'var(--border-color)';
+              const ov = card.querySelector('.thumb-hover-overlay');
+              if (ov) ov.style.opacity = '0';
+            });
+
+            card.addEventListener('click', () => {
+              openUniversalPreviewModal({
+                items: data.matched,
+                currentIndex: idx
+              });
+            });
+
             grid.appendChild(card);
           });
         }
@@ -3743,4 +3794,120 @@ if (btnOpenLogsFolder) {
 });
 document.querySelectorAll('input[name="rad-selects-action"]').forEach(rad => {
   rad.addEventListener('change', () => debouncedSaveSessionState());
+});
+
+// ----------------- UNIVERSAL PHOTO PREVIEW LIGHTBOX MODAL -----------------
+let previewModalState = {
+  items: [],
+  currentIndex: 0
+};
+
+window.openUniversalPreviewModal = function({ items, currentIndex = 0 }) {
+  const modal = document.getElementById('modal-photo-preview');
+  if (!modal || !items || items.length === 0) return;
+
+  previewModalState.items = items;
+  previewModalState.currentIndex = Math.max(0, Math.min(currentIndex, items.length - 1));
+
+  renderPreviewModalCurrentItem();
+  modal.classList.add('active');
+};
+
+function renderPreviewModalCurrentItem() {
+  const { items, currentIndex } = previewModalState;
+  if (!items || items.length === 0) return;
+
+  const item = items[currentIndex];
+  const absPath = item.abs_path || item.path || '';
+  const filename = item.filename || (absPath ? absPath.split(/[/\\]/).pop() : 'Photo');
+  const sizeBytes = item.size_bytes || 0;
+
+  const counterEl = document.getElementById('preview-modal-counter');
+  const titleEl = document.getElementById('preview-modal-filename');
+  const sizeEl = document.getElementById('preview-modal-size');
+  const pathEl = document.getElementById('preview-modal-path');
+  const imgEl = document.getElementById('preview-modal-img');
+  const loaderEl = document.getElementById('preview-modal-loader');
+  const prevBtn = document.getElementById('btn-preview-modal-prev');
+  const nextBtn = document.getElementById('btn-preview-modal-next');
+
+  if (counterEl) counterEl.innerText = `${currentIndex + 1} / ${items.length}`;
+  if (titleEl) {
+    titleEl.innerText = filename;
+    titleEl.title = filename;
+  }
+  if (sizeEl) sizeEl.innerText = sizeBytes > 0 ? `(${formatBytes(sizeBytes)})` : '';
+  if (pathEl) {
+    pathEl.innerText = absPath;
+    pathEl.title = absPath;
+  }
+
+  if (prevBtn) prevBtn.style.opacity = items.length > 1 ? '1' : '0.3';
+  if (nextBtn) nextBtn.style.opacity = items.length > 1 ? '1' : '0.3';
+
+  if (imgEl && loaderEl) {
+    loaderEl.style.display = 'block';
+    imgEl.style.opacity = '0.2';
+
+    // Fetch high-res preview
+    const previewUrl = API_BASE + '/api/preview_by_path?path=' + encodeURIComponent(absPath) + '&max_dim=1800';
+    imgEl.onload = () => {
+      loaderEl.style.display = 'none';
+      imgEl.style.opacity = '1';
+    };
+    imgEl.onerror = () => {
+      // Fallback to thumbnail URL if preview fails
+      const fallbackUrl = API_BASE + '/api/thumbnail_by_path?path=' + encodeURIComponent(absPath);
+      imgEl.onerror = null;
+      imgEl.src = fallbackUrl;
+      loaderEl.style.display = 'none';
+      imgEl.style.opacity = '1';
+    };
+    imgEl.src = previewUrl;
+  }
+}
+
+const btnPrevModalPrev = document.getElementById('btn-preview-modal-prev');
+const btnPrevModalNext = document.getElementById('btn-preview-modal-next');
+const btnPrevModalReveal = document.getElementById('btn-preview-modal-reveal');
+
+if (btnPrevModalPrev) {
+  btnPrevModalPrev.addEventListener('click', () => {
+    if (previewModalState.items.length <= 1) return;
+    previewModalState.currentIndex = (previewModalState.currentIndex - 1 + previewModalState.items.length) % previewModalState.items.length;
+    renderPreviewModalCurrentItem();
+  });
+}
+
+if (btnPrevModalNext) {
+  btnPrevModalNext.addEventListener('click', () => {
+    if (previewModalState.items.length <= 1) return;
+    previewModalState.currentIndex = (previewModalState.currentIndex + 1) % previewModalState.items.length;
+    renderPreviewModalCurrentItem();
+  });
+}
+
+if (btnPrevModalReveal) {
+  btnPrevModalReveal.addEventListener('click', () => {
+    const item = previewModalState.items[previewModalState.currentIndex];
+    const p = item?.abs_path || item?.path;
+    if (p) {
+      openFileLocation(p, false);
+    }
+  });
+}
+
+window.addEventListener('keydown', (e) => {
+  const modal = document.getElementById('modal-photo-preview');
+  if (!modal || !modal.classList.contains('active')) return;
+
+  if (e.key === 'ArrowLeft') {
+    e.preventDefault();
+    btnPrevModalPrev?.click();
+  } else if (e.key === 'ArrowRight') {
+    e.preventDefault();
+    btnPrevModalNext?.click();
+  } else if (e.key === 'Escape') {
+    modal.classList.remove('active');
+  }
 });

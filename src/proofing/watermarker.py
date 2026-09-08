@@ -62,6 +62,12 @@ def open_image_source(file_path: str) -> Optional[Image.Image]:
                         return img.convert("RGBA")
                 except Exception:
                     pass
+                # Fallback: rapid half-size decoding if embedded thumb missing
+                try:
+                    rgb = raw.postprocess(half_size=True, use_camera_wb=True)
+                    return Image.fromarray(rgb).convert("RGBA")
+                except Exception:
+                    pass
         except Exception:
             pass
 

@@ -764,6 +764,7 @@ def resolve_selects_against_directory_or_db(
             sidecar_path = str(sidecar_p) if sidecar_p.exists() else None
 
             matched.append({
+                "id": found_file.get("id"),
                 "query": q_clean,
                 "abs_path": found_file["abs_path"],
                 "filename": found_file["filename"],

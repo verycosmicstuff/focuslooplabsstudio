@@ -501,6 +501,47 @@ class TestProofingAndWatermark(unittest.TestCase):
         self.assertTrue(del_success)
         self.assertIsNone(get_preset_by_id(custom_id))
 
+    def test_21_thumbnail_and_preview_by_path_and_unlimited_photos(self):
+        """Test thumbnail_by_path, preview_by_path, and unlimited folder photo listing."""
+        from src.api.server import get_thumbnail_by_path, get_preview_by_path, list_photos_in_dir, get_source_photos
+        from src.core.db import get_db
+
+        # 1. Test thumbnail_by_path
+        resp_thumb = get_thumbnail_by_path(str(self.sample_photo))
+        self.assertIsNotNone(resp_thumb)
+        self.assertTrue(os.path.isfile(resp_thumb.path))
+        with Image.open(resp_thumb.path) as t_img:
+            self.assertLessEqual(max(t_img.size), 380)
+
+        # 2. Test preview_by_path
+        resp_prev = get_preview_by_path(str(self.sample_photo), max_dim=1200)
+        self.assertIsNotNone(resp_prev)
+        self.assertTrue(os.path.isfile(resp_prev.path))
+        with Image.open(resp_prev.path) as p_img:
+            self.assertLessEqual(max(p_img.size), 1200)
+
+        # 3. Test list_photos_in_dir without truncation
+        listing = list_photos_in_dir({"path": str(self.test_dir)})
+        self.assertGreaterEqual(listing["total"], 2)
+        self.assertEqual(len(listing["photos"]), listing["total"])
+
+        # 4. Test get_source_photos
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR IGNORE INTO sources (path, label) VALUES (?, ?)", (str(self.test_dir), "Mock Src"))
+        cursor.execute("SELECT id FROM sources WHERE path = ?", (str(self.test_dir),))
+        src_id = cursor.fetchone()[0]
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO files (source_id, rel_path, abs_path, filename, ext, size_bytes, mtime, ctime, media_type, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (src_id, "DSCF1001.JPG", str(self.sample_photo), "DSCF1001.JPG", ".jpg", 10000, 100, 100, "photo", "active"))
+        conn.commit()
+
+        src_photos = get_source_photos(src_id)
+        self.assertGreaterEqual(src_photos["total"], 1)
+        self.assertEqual(src_photos["photos"][0]["filename"], "DSCF1001.JPG")
+
 if __name__ == "__main__":
     unittest.main()
 

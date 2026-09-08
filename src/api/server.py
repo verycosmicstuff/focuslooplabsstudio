@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import hashlib
 import subprocess
 import threading
 from pathlib import Path
@@ -10,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 import psutil
+from PIL import Image
 
 from src.config import (
     BASE_DIR, THUMBNAILS_DIR, PERFORMANCE_MODES, DEFAULT_PORT, DEFAULT_HOST,
@@ -29,7 +31,7 @@ from src.sync.tracker import SyncTracker
 from src.organizer.manager import FileOrganizer
 from src.analyzer.video_advisor import analyze_video_suitability, format_bitrate
 from src.proofing.watermarker import (
-    watermark_manager, generate_watermark_preview, process_single_image
+    watermark_manager, generate_watermark_preview, process_single_image, open_image_source
 )
 from src.proofing.contact_sheet import (
     generate_contact_sheet_package, parse_client_selects,
@@ -284,6 +286,22 @@ def list_directory_subfolders(payload: Dict[str, Any]):
         "folder_name": p.name if p.name else str(p),
         "folder_path": str(p)
     }
+
+@app.get("/api/sources/{source_id}/photos")
+def get_source_photos(source_id: int):
+    """Returns all active photos and RAW files for the given source without artificial limits."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, abs_path, filename, size_bytes, media_type
+        FROM files
+        WHERE source_id = ? AND status = 'active'
+          AND media_type IN ('photo', 'raw')
+          AND ext NOT IN ('.xmp', '.thm', '.lrf', '.xml', '.json', '.txt')
+        ORDER BY filename ASC
+    """, (source_id,))
+    rows = [dict(r) for r in cursor.fetchall()]
+    return {"photos": rows, "total": len(rows)}
 
 @app.delete("/api/sources/{source_id}")
 def delete_source(source_id: int):
@@ -701,6 +719,71 @@ def get_thumbnail(file_id: int):
 
     raise HTTPException(status_code=404, detail="Thumbnail unavailable")
 
+@app.get("/api/thumbnail_by_path")
+def get_thumbnail_by_path(path: str):
+    """Returns or generates a cached 380x380 thumbnail for an arbitrary file path (supports RAW & standard photos)."""
+    if not path:
+        raise HTTPException(status_code=400, detail="Path parameter required")
+
+    p = Path(path)
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    cache_key = hashlib.md5(str(p.resolve()).encode("utf-8")).hexdigest()
+    thumb_path = THUMBNAILS_DIR / f"thumb_path_{cache_key}.jpg"
+    if thumb_path.is_file():
+        return FileResponse(str(thumb_path), media_type="image/jpeg", headers=THUMB_CACHE_HEADERS)
+
+    img = open_image_source(str(p))
+    if not img:
+        # If standard photo, try direct file fallback
+        ext = p.suffix.lower()
+        if ext in PHOTO_EXTS:
+            return FileResponse(str(p), headers=THUMB_CACHE_HEADERS)
+        raise HTTPException(status_code=415, detail="Unable to extract thumbnail from media")
+
+    try:
+        img.thumbnail((380, 380), Image.Resampling.BILINEAR)
+        rgb_img = img.convert("RGB")
+        thumb_path.parent.mkdir(parents=True, exist_ok=True)
+        rgb_img.save(str(thumb_path), "JPEG", quality=80, optimize=True)
+        return FileResponse(str(thumb_path), media_type="image/jpeg", headers=THUMB_CACHE_HEADERS)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate thumbnail: {e}")
+
+@app.get("/api/preview_by_path")
+def get_preview_by_path(path: str, max_dim: int = 1600):
+    """Returns or generates a crisp high-resolution preview image (up to max_dim) for lightbox viewing."""
+    if not path:
+        raise HTTPException(status_code=400, detail="Path parameter required")
+
+    p = Path(path)
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    cache_key = hashlib.md5(f"{str(p.resolve())}_{max_dim}".encode("utf-8")).hexdigest()
+    prev_path = THUMBNAILS_DIR / f"prev_path_{cache_key}.jpg"
+    if prev_path.is_file():
+        return FileResponse(str(prev_path), media_type="image/jpeg", headers=THUMB_CACHE_HEADERS)
+
+    img = open_image_source(str(p))
+    if not img:
+        ext = p.suffix.lower()
+        if ext in PHOTO_EXTS:
+            return FileResponse(str(p), headers=THUMB_CACHE_HEADERS)
+        raise HTTPException(status_code=415, detail="Unable to extract preview from media")
+
+    try:
+        w, h = img.size
+        if max(w, h) > max_dim:
+            img.thumbnail((max_dim, max_dim), Image.Resampling.BILINEAR)
+        rgb_img = img.convert("RGB")
+        prev_path.parent.mkdir(parents=True, exist_ok=True)
+        rgb_img.save(str(prev_path), "JPEG", quality=85, optimize=True)
+        return FileResponse(str(prev_path), media_type="image/jpeg", headers=THUMB_CACHE_HEADERS)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate preview: {e}")
+
 # ----------------- FILE SYSTEM REVEAL / OPEN -----------------
 
 @app.post("/api/files/open-location")
@@ -1083,7 +1166,10 @@ def list_photos_in_dir(payload: Dict[str, Any]):
     except Exception:
         pass
 
-    return {"photos": photos[:1500], "total": len(photos)}
+    limit = payload.get("limit")
+    if limit and isinstance(limit, int) and limit > 0:
+        return {"photos": photos[:limit], "total": len(photos)}
+    return {"photos": photos, "total": len(photos)}
 
 # ----------------- SESSION STATE & TASK MEMORY -----------------
 
