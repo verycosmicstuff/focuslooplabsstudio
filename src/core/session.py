@@ -35,7 +35,8 @@ DEFAULT_SESSION_STATE: Dict[str, Any] = {
         "output_mode": "original_subfolder",
         "subfolder_name": "_proofs",
         "subfolder_type": "suffix",
-        "suffix": "_proof"
+        "suffix": "_proof",
+        "active_preset_id": "builtin_diagonal_text"
     },
     "contact_sheet_settings": {
         "title": "Client Proofing Gallery",

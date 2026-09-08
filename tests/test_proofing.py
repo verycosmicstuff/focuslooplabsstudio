@@ -437,6 +437,70 @@ class TestProofingAndWatermark(unittest.TestCase):
         expected_suff = suff_folder / "shoot_suff_web" / "DSCF4002_s.jpg"
         self.assertTrue(expected_suff.exists(), f"Expected {expected_suff} to exist")
 
+    def test_20_watermark_presets_crud_and_api(self):
+        """Test preset engine and API CRUD operations for presets."""
+        from src.proofing.presets import get_all_presets, save_preset, delete_preset, get_preset_by_id
+        from src.api.server import api_get_presets, api_save_preset, api_delete_preset
+
+        # 1. Fetch default presets
+        presets = get_all_presets()
+        self.assertGreaterEqual(len(presets), 5)
+        builtin_ids = [p["id"] for p in presets if p.get("is_builtin")]
+        self.assertIn("builtin_diagonal_text", builtin_ids)
+        self.assertIn("builtin_logo_bottom_right", builtin_ids)
+
+        # 2. Cannot delete built-in
+        can_del_builtin = delete_preset("builtin_diagonal_text")
+        self.assertFalse(can_del_builtin)
+
+        # 3. Create a new custom preset
+        new_preset = save_preset(
+            name="Unit Test Custom Preset",
+            config={
+                "watermark_type": "text",
+                "text": "UNIT TEST PRESET",
+                "position": "center",
+                "opacity": 0.5,
+                "font_scale": 0.05,
+                "quality": 88,
+                "max_dimension": 2500,
+                "output_mode": "original_subfolder",
+                "subfolder_name": "_custom_proofs",
+                "subfolder_type": "suffix"
+            }
+        )
+        self.assertEqual(new_preset["name"], "Unit Test Custom Preset")
+        self.assertFalse(new_preset["is_builtin"])
+        custom_id = new_preset["id"]
+
+        # Verify lookup
+        fetched = get_preset_by_id(custom_id)
+        self.assertIsNotNone(fetched)
+        self.assertEqual(fetched["config"]["text"], "UNIT TEST PRESET")
+
+        # 4. Update the custom preset
+        updated = save_preset(
+            name="Unit Test Custom Preset (Updated)",
+            config={
+                "watermark_type": "logo",
+                "text": "UPDATED TEXT",
+                "quality": 90
+            },
+            preset_id=custom_id
+        )
+        self.assertEqual(updated["name"], "Unit Test Custom Preset (Updated)")
+        self.assertEqual(updated["config"]["quality"], 90)
+
+        # 5. Test API Endpoints
+        api_res = api_get_presets()
+        self.assertIn("presets", api_res)
+        self.assertTrue(any(p["id"] == custom_id for p in api_res["presets"]))
+
+        # 6. Delete the custom preset
+        del_success = delete_preset(custom_id)
+        self.assertTrue(del_success)
+        self.assertIsNone(get_preset_by_id(custom_id))
+
 if __name__ == "__main__":
     unittest.main()
 

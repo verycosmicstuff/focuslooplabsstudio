@@ -15,6 +15,7 @@
 - `src/organizer/manager.py`: Safe file operations (move, archive, delete to trash, dedupe, sync tracking between backup and sources).
 - `src/proofing/watermarker.py`: Bulk text & PNG logo watermarking with diagonal repeating grid protection, web proof resizing, and instant live preview.
 - `src/proofing/contact_sheet.py`: Standalone client proofing HTML gallery generator with lightbox selection, plus smart client selects resolver & safe exporter with XMP sidecar binding.
+- `src/proofing/presets.py`: Reusable watermark & export configuration presets engine (built-in templates & custom user presets).
 - `src/core/logger.py`: Rotating file logger writing to `logs/savespace.log` with unhandled exception hooks.
 - `src/core/session.py`: Persistent session state and completed task memory manager (`data/session_state.json`).
 - `src/api/server.py`: FastAPI server serving endpoints & interactive dashboard UI.
@@ -23,9 +24,10 @@
 - `TECH_DOCUMENTATION.md`: Complete living technical specification, ER diagram, algorithms, and API catalog.
 
 ## Recent Changes
-- Native Desktop App: Compiled `SaveSpace.exe` with multi-res icon, single-instance mutex, Start Menu shortcut, and rotating file logger (`logs/savespace.log`).
-- Proofing & Watermarking: Multi-folder picker, PNG logo picker, long edge slider, and configurable subfolder naming styles (`prefix`, `custom`, `suffix`).
-- Disk & Session Integrity: Auto-restoring session state, Explorer reveal, and non-destructive proof subfolder isolation.
+- Duplicate Grouping: Added folder-pair cluster grouping, folder-specific batch selectors, real-time filtering, and "Select None" button.
+- Proofing Presets: Added Watermark Presets System (+ Save Preset, Update, Delete) with built-in templates and live preview application.
+- Naming & Structure: Configurable subfolder naming styles (`suffix`, `prefix`, `custom`) and centralized proof folder isolation.
+- Desktop App & Session: Compiled `SaveSpace.exe` with single-instance mutex, rotating logger (`logs/savespace.log`), and session persistence.
 
 ## Active Objective
 - Client media proofing, watermarking, batch transcoding, and storage reclamation.

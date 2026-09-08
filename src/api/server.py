@@ -35,6 +35,7 @@ from src.proofing.contact_sheet import (
     generate_contact_sheet_package, parse_client_selects,
     resolve_selects_against_directory_or_db, execute_selects_export
 )
+from src.proofing.presets import get_all_presets, save_preset, delete_preset
 
 logger = get_logger("api")
 
@@ -241,7 +242,7 @@ def list_directory_subfolders(payload: Dict[str, Any]):
     if not p.exists() or not p.is_dir():
         return {"subfolders": [], "direct_photo_count": 0, "folder_name": "", "folder_path": ""}
 
-    system_skips = {"$recycle.bin", "system volume information", ".git", ".idea", ".vscode", "node_modules", ".gemini", "_proofs"}
+    system_skips = {"$recycle.bin", "system volume information", ".git", ".idea", ".vscode", "node_modules", ".gemini", "_proofs", "proofs"}
     valid_exts = set(PHOTO_EXTS) | set(RAW_EXTS)
     subfolders = []
     direct_photo_count = 0
@@ -251,7 +252,7 @@ def list_directory_subfolders(payload: Dict[str, Any]):
             for entry in sorted(it, key=lambda e: e.name.lower()):
                 if entry.is_dir(follow_symlinks=False):
                     nl = entry.name.lower()
-                    if nl in system_skips or nl.startswith(("_proof", "_web_proof")) or nl.endswith(("_proofs", "_proof")) or "_proofs" in nl:
+                    if nl in system_skips or nl.startswith(("_proof", "_web_proof")) or nl.endswith(("_proofs", "_proof", "proofs")) or "_proofs" in nl:
                         continue
                     sub_p = str(Path(entry.path).resolve())
                     sub_item = {
@@ -763,6 +764,29 @@ def open_file_location(payload: Dict[str, Any]):
 
 # ----------------- CLIENT PROOFING & WATERMARKING -----------------
 
+@app.get("/api/proofing/presets")
+def api_get_presets():
+    return {"presets": get_all_presets()}
+
+@app.post("/api/proofing/presets")
+def api_save_preset(payload: Dict[str, Any]):
+    name = payload.get("name", "").strip()
+    config = payload.get("config", {})
+    preset_id = payload.get("id")
+    if not name:
+        raise HTTPException(status_code=400, detail="Preset name is required")
+    if not config:
+        raise HTTPException(status_code=400, detail="Preset configuration is required")
+    saved = save_preset(name, config, preset_id=preset_id)
+    return saved
+
+@app.delete("/api/proofing/presets/{preset_id}")
+def api_delete_preset(preset_id: str):
+    success = delete_preset(preset_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Cannot delete preset (built-in or not found)")
+    return {"status": "deleted", "id": preset_id}
+
 @app.post("/api/proofing/preview")
 def preview_watermark(payload: Dict[str, Any]):
     file_id = payload.get("file_id")
@@ -1042,7 +1066,7 @@ def list_photos_in_dir(payload: Dict[str, Any]):
             for entry in entries_iter:
                 if entry.is_file():
                     # Skip previously exported proof subfolders
-                    if any(part.lower().startswith(("_proof", "_web_proof")) or part.lower().endswith(("_proofs", "_proof")) or "_proofs" in part.lower() for part in entry.parts[:-1]):
+                    if any(part.lower() in ("proofs", "_proofs") or part.lower().startswith(("_proof", "_web_proof")) or part.lower().endswith(("_proofs", "_proof", "proofs")) or "_proofs" in part.lower() for part in entry.parts[:-1]):
                         continue
                     ext = entry.suffix.lower()
                     if ext in valid_exts:

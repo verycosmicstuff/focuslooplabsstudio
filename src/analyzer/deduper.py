@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from src.core.db import get_db
 from src.scanner.indexer import compute_full_hash
@@ -102,8 +103,20 @@ class DuplicateDetector:
                     primary_name = primary_item["filename"].lower()
                     for m in grp:
                         m["is_same_filename"] = (m["filename"].lower() == primary_name)
+                        p = Path(m["abs_path"])
+                        m["folder_path"] = str(p.parent)
+                        m["folder_name"] = p.parent.name if p.parent.name else str(p.parent)
 
                     all_same_name = all(m["is_same_filename"] for m in grp)
+
+                    # Compute folder pairing
+                    unique_folder_paths = sorted(list(dict.fromkeys(m["folder_path"] for m in grp)))
+                    unique_folder_names = [Path(fp).name if Path(fp).name else fp for fp in unique_folder_paths]
+                    folder_pair_key = " ::: ".join(unique_folder_paths)
+                    if len(unique_folder_names) == 1:
+                        folder_pair_label = f"{unique_folder_names[0]} (Internal Folder Copies)"
+                    else:
+                        folder_pair_label = " ⟷ ".join(unique_folder_names)
 
                     duplicate_groups.append({
                         "hash": full_h,
@@ -113,6 +126,9 @@ class DuplicateDetector:
                         "primary_id": primary_item["id"],
                         "primary_filename": primary_item["filename"],
                         "all_same_name": all_same_name,
+                        "folder_pair_key": folder_pair_key,
+                        "folder_pair_label": folder_pair_label,
+                        "folder_paths": unique_folder_paths,
                         "files": grp
                     })
 

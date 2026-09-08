@@ -179,17 +179,26 @@
 
       <!-- 4. DUPLICATES FINDER TAB -->
       <section id="tab-duplicates" class="tab-panel">
-        <div class="toolbar">
-          <div class="toolbar-group">
+        <div class="toolbar" style="flex-wrap: wrap; gap: 10px;">
+          <div class="toolbar-group" style="gap: 12px; flex-wrap: wrap;">
             <label style="font-size: 13px; color:var(--text-muted); display:flex; align-items:center; gap:6px;">
               <input type="checkbox" id="chk-same-filename" checked> Exact Same Filename Only (Safe)
             </label>
-            <label style="font-size: 13px; color:var(--text-muted); display:flex; align-items:center; gap:6px; margin-left:14px;">
+            <label style="font-size: 13px; color:var(--text-muted); display:flex; align-items:center; gap:6px;">
               <input type="checkbox" id="chk-cross-source"> Cross-Drive Duplicates Only (SSD vs NAS)
             </label>
+            <div style="display: flex; align-items: center; gap: 6px; margin-left: 6px;">
+              <label style="font-size: 12px; color: var(--text-muted);">Grouping:</label>
+              <select id="sel-dupe-group-mode" style="background: var(--bg-card); color: #fff; border: 1px solid var(--border-color); padding: 4px 8px; border-radius: 6px; font-size: 12px;">
+                <option value="folder" selected>📁 Group by Folder Pair</option>
+                <option value="flat">📋 Flat List (All Sets)</option>
+              </select>
+            </div>
           </div>
-          <div class="toolbar-group">
-            <button id="btn-auto-select-redundant" class="btn btn-secondary btn-sm">Auto-Select Exact Copies</button>
+          <div class="toolbar-group" style="gap: 8px; flex-wrap: wrap;">
+            <input type="text" id="txt-dupe-filter" placeholder="Filter folder or file..." style="background: var(--bg-card); color: #fff; border: 1px solid var(--border-color); padding: 4px 10px; border-radius: 6px; font-size: 12px; width: 170px;">
+            <button id="btn-auto-select-redundant" class="btn btn-secondary btn-sm" title="Auto-select all redundant exact copies">Auto-Select Exact Copies</button>
+            <button id="btn-dupe-select-none" class="btn btn-secondary btn-sm" title="Deselect all checked duplicates">Select None</button>
             <button id="btn-delete-selected-dupes" class="btn btn-danger btn-sm">Recycle Selected Duplicates</button>
           </div>
         </div>
@@ -472,6 +481,23 @@
             <!-- Middle: Watermark Settings & Web Resize -->
             <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 12px; height: 740px; overflow-y: auto;">
               <span style="font-size: 13px; font-weight: 700; color: var(--accent-cyan);">2. Watermark & Web Settings</span>
+
+              <!-- Watermark Presets Toolbar -->
+              <div style="background: rgba(6, 182, 212, 0.08); border: 1px solid rgba(6, 182, 212, 0.25); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <label style="font-size: 11px; font-weight: 700; color: var(--accent-cyan); display: flex; align-items: center; gap: 4px;">
+                    <span>⚙️ Watermark Preset:</span>
+                  </label>
+                  <div style="display: flex; gap: 4px;">
+                    <button id="btn-preset-save-new" class="btn btn-secondary btn-sm" type="button" style="padding: 2px 7px; font-size: 11px;" title="Save current settings as a new preset">+ Save Preset</button>
+                    <button id="btn-preset-update" class="btn btn-secondary btn-sm" type="button" style="padding: 2px 7px; font-size: 11px; display: none;" title="Update active custom preset with current settings">💾 Update</button>
+                    <button id="btn-preset-delete" class="btn btn-danger btn-sm" type="button" style="padding: 2px 7px; font-size: 11px; display: none;" title="Delete this custom preset">🗑️</button>
+                  </div>
+                </div>
+                <select id="sel-watermark-preset" style="width: 100%; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 5px 8px; border-radius: 6px; font-size: 12px;">
+                  <option value="">Loading presets...</option>
+                </select>
+              </div>
 
               <div>
                 <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px;">Watermark Type:</label>
@@ -977,6 +1003,29 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary modal-close">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Save Watermark Preset Modal -->
+  <div id="modal-save-preset" class="modal-overlay">
+    <div class="modal-dialog" style="max-width: 440px;">
+      <div class="modal-header">
+        <h3 style="font-size: 15px;">💾 Save Watermark Preset</h3>
+        <button class="btn btn-secondary btn-sm modal-close">&times;</button>
+      </div>
+      <div class="modal-body" style="display: flex; flex-direction: column; gap: 12px;">
+        <p style="font-size: 12px; color: var(--text-muted); margin: 0; line-height: 1.4;">
+          Save your current logo, text, resolution, quality, and destination settings as a named preset for quick reuse.
+        </p>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <label style="font-size: 11px; font-weight: 600; color: var(--text-main);">Preset Name:</label>
+          <input type="text" id="txt-preset-name-input" placeholder="e.g. GBIA 2026 Logo Proof" style="background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 7px 10px; border-radius: 6px; font-size: 12px;">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary modal-close">Cancel</button>
+        <button id="btn-modal-confirm-save-preset" type="button" class="btn btn-primary">Save Preset</button>
       </div>
     </div>
   </div>

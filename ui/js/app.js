@@ -609,94 +609,245 @@ async function executeCullingAction(action) {
 document.getElementById('btn-cull-trash').addEventListener('click', () => executeCullingAction('trash'));
 document.getElementById('btn-cull-quarantine').addEventListener('click', () => executeCullingAction('quarantine'));
 
+let dupeFilterDebounce = null;
+
+function createDuplicateSetCard(group, idx) {
+  const card = document.createElement('div');
+  card.className = 'dupe-set-card';
+  card.style.background = 'var(--bg-card)';
+  card.style.border = '1px solid var(--border-color)';
+  card.style.borderRadius = '8px';
+  card.style.padding = '12px 14px';
+  card.style.marginBottom = '12px';
+
+  let filesHtml = '';
+  const primaryName = (group.primary_filename || '').toLowerCase();
+
+  group.files.forEach(f => {
+    const isPrimary = f.id === group.primary_id;
+    const isSameName = (f.filename.toLowerCase() === primaryName);
+
+    let tag = '';
+    if (isPrimary) {
+      tag = '<span class="brand-badge" style="background:rgba(16,185,129,0.2); color:var(--accent-emerald);">KEEP (Primary)</span>';
+    } else if (isSameName) {
+      tag = '<span class="brand-badge" style="background:rgba(244,63,94,0.2); color:var(--accent-rose);">EXACT COPY</span>';
+    } else {
+      tag = '<span class="brand-badge" style="background:rgba(245,158,11,0.2); color:var(--accent-amber);" title="Content hash matches, but filename is different">DIFFERENT FILENAME</span>';
+    }
+
+    const shouldCheck = !isPrimary && isSameName;
+
+    filesHtml += '<div class="dupe-file-row" data-path="' + escapeHtml(f.abs_path) + '" data-name="' + escapeHtml(f.filename) + '" data-folder="' + escapeHtml(f.folder_path || '') + '" style="display:flex; align-items:center; justify-content:space-between; padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.04);">'
+      + '<div style="display:flex; align-items:center; gap:10px;">'
+      + '<input type="checkbox" class="chk-dupe-item" data-id="' + f.id + '" data-same-name="' + isSameName + '" data-is-primary="' + isPrimary + '" ' + (shouldCheck ? 'checked' : '') + '>'
+      + '<div>'
+      + '<div style="font-weight:600; font-size:12px;">' + escapeHtml(f.filename) + ' ' + tag + '</div>'
+      + '<div style="font-size:11px; color:var(--text-muted); font-family:monospace;">' + escapeHtml(f.abs_path) + '</div>'
+      + '</div>'
+      + '</div>'
+      + '<div style="display:flex; align-items:center; gap:8px;">'
+      + '<div style="font-size:11px; color:var(--text-muted);">' + escapeHtml(f.source_label || '') + ' (' + escapeHtml(f.drive_type || '') + ')</div>'
+      + '<button class="btn btn-secondary btn-sm btn-open-dupe" title="Reveal in File Explorer" style="padding:2px 6px; font-size:11px;">📂</button>'
+      + '</div>'
+      + '</div>';
+  });
+
+  card.innerHTML = '<div style="display:flex; justify-content:space-between; margin-bottom:8px;">'
+    + '<div><span style="font-weight:700; font-size:13px;">Duplicate Set #' + (idx + 1) + '</span><span style="font-size:11px; color:var(--text-muted); margin-left:8px;">' + group.count + ' identical copies (' + formatBytes(group.file_size) + ' each)</span></div>'
+    + '<div style="color:var(--accent-amber); font-size:11px; font-weight:600;">Reclaimable: ' + formatBytes(group.potential_savings_bytes) + '</div>'
+    + '</div>' + filesHtml;
+
+  card.querySelectorAll('.dupe-file-row').forEach(row => {
+    const filePath = row.dataset.path;
+    const fileName = row.dataset.name;
+    const btn = row.querySelector('.btn-open-dupe');
+    if (btn) {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openFileLocation(filePath, false);
+      });
+    }
+    row.addEventListener('contextmenu', (e) => {
+      showContextMenu(e, {
+        filename: fileName,
+        abs_path: filePath,
+        folder_path: filePath ? filePath.replace(/[/\\][^/\\]+$/, '') : '',
+        can_queue: false
+      });
+    });
+  });
+
+  return card;
+}
+
+function renderDuplicates() {
+  const container = document.getElementById('duplicates-container');
+  if (!container) return;
+  container.innerHTML = '';
+
+  if (!duplicatesData || duplicatesData.length === 0) {
+    container.innerHTML = '<p style="color:var(--text-muted); padding:20px; text-align:center;">No duplicate files found! Your drives are clean.</p>';
+    return;
+  }
+
+  const query = (document.getElementById('txt-dupe-filter')?.value || '').trim().toLowerCase();
+  const groupMode = document.getElementById('sel-dupe-group-mode')?.value || 'folder';
+
+  // 1. Filter duplicate sets
+  const filteredSets = duplicatesData.filter(g => {
+    if (!query) return true;
+    if (g.folder_pair_label && g.folder_pair_label.toLowerCase().includes(query)) return true;
+    if (g.primary_filename && g.primary_filename.toLowerCase().includes(query)) return true;
+    return g.files.some(f => (f.abs_path && f.abs_path.toLowerCase().includes(query)) || (f.filename && f.filename.toLowerCase().includes(query)));
+  });
+
+  if (filteredSets.length === 0) {
+    container.innerHTML = '<p style="color:var(--text-muted); padding:20px; text-align:center;">No duplicates match your filter criteria.</p>';
+    return;
+  }
+
+  // 2. Render either Folder Groups or Flat List
+  if (groupMode === 'folder') {
+    const folderGroups = {};
+    filteredSets.forEach((g, idx) => {
+      let key = g.folder_pair_key;
+      let label = g.folder_pair_label;
+      let paths = g.folder_paths;
+
+      if (!key) {
+        paths = Array.from(new Set(g.files.map(f => {
+          if (f.folder_path) return f.folder_path;
+          return f.abs_path ? f.abs_path.replace(/[/\\][^/\\]+$/, '') : 'Folder';
+        }))).sort();
+        key = paths.join(' ::: ');
+        const names = paths.map(p => p.split(/[/\\]/).pop() || p);
+        label = names.length === 1 ? `${names[0]} (Internal Folder Copies)` : names.join(' ⟷ ');
+      }
+
+      if (!folderGroups[key]) {
+        folderGroups[key] = {
+          key: key,
+          label: label,
+          folderPaths: paths || [],
+          sets: [],
+          totalSavings: 0,
+          totalCopies: 0
+        };
+      }
+      folderGroups[key].sets.push({ group: g, origIndex: idx });
+      folderGroups[key].totalSavings += (g.potential_savings_bytes || 0);
+      folderGroups[key].totalCopies += (g.count || g.files.length);
+    });
+
+    const sortedGroups = Object.values(folderGroups).sort((a, b) => b.totalSavings - a.totalSavings);
+
+    sortedGroups.forEach(fg => {
+      const groupWrapper = document.createElement('div');
+      groupWrapper.className = 'dupe-folder-group-wrapper';
+      groupWrapper.style.background = 'rgba(15, 23, 42, 0.4)';
+      groupWrapper.style.border = '1px solid rgba(6, 182, 212, 0.25)';
+      groupWrapper.style.borderRadius = '10px';
+      groupWrapper.style.marginBottom = '20px';
+      groupWrapper.style.padding = '14px 16px';
+
+      // Header actions
+      let batchButtonsHtml = '';
+      if (fg.folderPaths.length === 2) {
+        const name0 = fg.folderPaths[0].split(/[/\\]/).pop() || fg.folderPaths[0];
+        const name1 = fg.folderPaths[1].split(/[/\\]/).pop() || fg.folderPaths[1];
+        batchButtonsHtml += `<button class="btn btn-secondary btn-xs btn-group-pick-folder" data-folder="${escapeHtml(fg.folderPaths[1])}" style="font-size:11px; padding:3px 8px;" title="Select all duplicates in ${escapeHtml(name1)}">Check all in "${escapeHtml(name1)}"</button>`;
+        batchButtonsHtml += `<button class="btn btn-secondary btn-xs btn-group-pick-folder" data-folder="${escapeHtml(fg.folderPaths[0])}" style="font-size:11px; padding:3px 8px;" title="Select all duplicates in ${escapeHtml(name0)}">Check all in "${escapeHtml(name0)}"</button>`;
+      }
+      batchButtonsHtml += `<button class="btn btn-secondary btn-xs btn-group-uncheck-all" style="font-size:11px; padding:3px 8px;">Deselect Folder</button>`;
+
+      const headerDiv = document.createElement('div');
+      headerDiv.style.display = 'flex';
+      headerDiv.style.justifyContent = 'space-between';
+      headerDiv.style.alignItems = 'flex-start';
+      headerDiv.style.flexWrap = 'wrap';
+      headerDiv.style.gap = '10px';
+      headerDiv.style.marginBottom = '14px';
+      headerDiv.style.borderBottom = '1px solid rgba(255, 255, 255, 0.06)';
+      headerDiv.style.paddingBottom = '10px';
+
+      headerDiv.innerHTML = `
+        <div>
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <span style="font-size:16px;">📁</span>
+            <span style="font-size:14px; font-weight:700; color:var(--accent-cyan);">${escapeHtml(fg.label)}</span>
+            <span class="brand-badge" style="font-size:11px;">${fg.sets.length} duplicate sets</span>
+            <span style="color:var(--accent-amber); font-size:12px; font-weight:600;">Reclaimable: ${formatBytes(fg.totalSavings)}</span>
+          </div>
+          <div style="font-size:11px; color:var(--text-muted); font-family:monospace; margin-top:4px;">
+            ${escapeHtml(fg.folderPaths.join('  ⟷  '))}
+          </div>
+        </div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap;">
+          ${batchButtonsHtml}
+        </div>
+      `;
+
+      groupWrapper.appendChild(headerDiv);
+
+      fg.sets.forEach(item => {
+        const setCard = createDuplicateSetCard(item.group, item.origIndex);
+        groupWrapper.appendChild(setCard);
+      });
+
+      groupWrapper.querySelectorAll('.btn-group-pick-folder').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const targetFolder = (btn.dataset.folder || '').toLowerCase();
+          let picked = 0;
+          groupWrapper.querySelectorAll('.dupe-file-row').forEach(row => {
+            const p = (row.dataset.path || '').toLowerCase();
+            const chk = row.querySelector('.chk-dupe-item');
+            if (chk) {
+              if (p.startsWith(targetFolder)) {
+                chk.checked = true;
+                picked++;
+              } else {
+                chk.checked = false;
+              }
+            }
+          });
+          showToast(`Checked ${picked} copies in ${btn.innerText.replace('Check all in ', '')}`, 'info');
+        });
+      });
+
+      groupWrapper.querySelectorAll('.btn-group-uncheck-all').forEach(btn => {
+        btn.addEventListener('click', () => {
+          groupWrapper.querySelectorAll('.chk-dupe-item').forEach(chk => {
+            chk.checked = false;
+          });
+          showToast('Deselected this folder group.', 'info');
+        });
+      });
+
+      container.appendChild(groupWrapper);
+    });
+  } else {
+    // Flat List
+    filteredSets.forEach((group, idx) => {
+      const card = createDuplicateSetCard(group, idx);
+      container.appendChild(card);
+    });
+  }
+}
+
 async function loadDuplicates() {
   const crossOnly = document.getElementById('chk-cross-source').checked;
   const sameNameOnly = document.getElementById('chk-same-filename') ? document.getElementById('chk-same-filename').checked : true;
   const container = document.getElementById('duplicates-container');
-  container.innerHTML = '<p style="color:var(--text-muted); padding:20px;">Scanning duplicate clusters...</p>';
+  container.innerHTML = '<p style="color:var(--text-muted); padding:20px; text-align:center;">Scanning duplicate clusters...</p>';
 
   try {
     const res = await fetch(API_BASE + '/api/duplicates?cross_source_only=' + crossOnly + '&same_name_only=' + sameNameOnly);
     duplicatesData = await res.json();
-    container.innerHTML = '';
     selectedDupeIds.clear();
-
-    if (duplicatesData.length === 0) {
-      container.innerHTML = '<p style="color:var(--text-muted); padding:20px;">No duplicate files found! Your drives are clean.</p>';
-      return;
-    }
-
-    duplicatesData.forEach((group, idx) => {
-      const card = document.createElement('div');
-      card.style.background = 'var(--bg-card)';
-      card.style.border = '1px solid var(--border-color)';
-      card.style.borderRadius = '10px';
-      card.style.padding = '16px';
-      card.style.marginBottom = '16px';
-
-      let filesHtml = '';
-      const primaryName = (group.primary_filename || '').toLowerCase();
-
-      group.files.forEach(f => {
-        const isPrimary = f.id === group.primary_id;
-        const isSameName = (f.filename.toLowerCase() === primaryName);
-
-        let tag = '';
-        if (isPrimary) {
-          tag = '<span class="brand-badge" style="background:rgba(16,185,129,0.2); color:var(--accent-emerald);">KEEP (Primary)</span>';
-        } else if (isSameName) {
-          tag = '<span class="brand-badge" style="background:rgba(244,63,94,0.2); color:var(--accent-rose);">EXACT COPY</span>';
-        } else {
-          tag = '<span class="brand-badge" style="background:rgba(245,158,11,0.2); color:var(--accent-amber);" title="Content hash matches, but filename is different">DIFFERENT FILENAME</span>';
-        }
-
-        // Only pre-check if not primary AND has identical filename! Never pre-check different filenames!
-        const shouldCheck = !isPrimary && isSameName;
-
-        filesHtml += '<div class="dupe-file-row" data-path="' + escapeHtml(f.abs_path) + '" data-name="' + escapeHtml(f.filename) + '" style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.05); cursor:context-menu;">'
-          + '<div style="display:flex; align-items:center; gap:10px;">'
-          + '<input type="checkbox" class="chk-dupe-item" data-id="' + f.id + '" data-same-name="' + isSameName + '" data-is-primary="' + isPrimary + '" ' + (shouldCheck ? 'checked' : '') + '>'
-          + '<div>'
-          + '<div style="font-weight:600; font-size:13px;">' + escapeHtml(f.filename) + ' ' + tag + '</div>'
-          + '<div style="font-size:11px; color:var(--text-muted); font-family:monospace;">' + escapeHtml(f.abs_path) + '</div>'
-          + '</div>'
-          + '</div>'
-          + '<div style="display:flex; align-items:center; gap:8px;">'
-          + '<div style="font-size:12px; color:var(--text-muted);">' + escapeHtml(f.source_label) + ' (' + escapeHtml(f.drive_type) + ')</div>'
-          + '<button class="btn btn-secondary btn-sm btn-open-dupe" title="Reveal in File Explorer" style="padding:2px 7px; font-size:11px;">📂</button>'
-          + '</div>'
-          + '</div>';
-      });
-
-      card.innerHTML = '<div style="display:flex; justify-content:space-between; margin-bottom:12px;">'
-        + '<div><span style="font-weight:700; font-size:14px;">Duplicate Set #' + (idx + 1) + '</span><span style="font-size:12px; color:var(--text-muted); margin-left:10px;">' + group.count + ' identical copies (' + formatBytes(group.file_size) + ' each)</span></div>'
-        + '<div style="color:var(--accent-amber); font-size:12px; font-weight:600;">Reclaimable: ' + formatBytes(group.potential_savings_bytes) + '</div>'
-        + '</div>' + filesHtml;
-
-      card.querySelectorAll('.dupe-file-row').forEach(row => {
-        const filePath = row.dataset.path;
-        const fileName = row.dataset.name;
-        const btn = row.querySelector('.btn-open-dupe');
-        if (btn) {
-          btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            openFileLocation(filePath, false);
-          });
-        }
-        row.addEventListener('contextmenu', (e) => {
-          showContextMenu(e, {
-            filename: fileName,
-            abs_path: filePath,
-            folder_path: filePath ? filePath.replace(/[/\\][^/\\]+$/, '') : '',
-            can_queue: false
-          });
-        });
-      });
-
-      container.appendChild(card);
-    });
+    renderDuplicates();
   } catch (err) {
-    container.innerHTML = '<p style="color:var(--accent-rose);">Failed to load duplicates: ' + err + '</p>';
+    container.innerHTML = '<p style="color:var(--accent-rose); padding:20px;">Failed to load duplicates: ' + err + '</p>';
   }
 }
 
@@ -704,6 +855,23 @@ document.getElementById('chk-cross-source').addEventListener('change', loadDupli
 const chkSameNameEl = document.getElementById('chk-same-filename');
 if (chkSameNameEl) {
   chkSameNameEl.addEventListener('change', loadDuplicates);
+}
+
+const selDupeGroupMode = document.getElementById('sel-dupe-group-mode');
+if (selDupeGroupMode) {
+  selDupeGroupMode.addEventListener('change', () => {
+    renderDuplicates();
+  });
+}
+
+const txtDupeFilter = document.getElementById('txt-dupe-filter');
+if (txtDupeFilter) {
+  txtDupeFilter.addEventListener('input', () => {
+    clearTimeout(dupeFilterDebounce);
+    dupeFilterDebounce = setTimeout(() => {
+      renderDuplicates();
+    }, 180);
+  });
 }
 
 const btnAutoSelectDupe = document.getElementById('btn-auto-select-redundant');
@@ -720,7 +888,17 @@ if (btnAutoSelectDupe) {
         chk.checked = false;
       }
     });
-    alert('Selected ' + count + ' exact redundant copies.');
+    showToast('Auto-selected ' + count + ' exact redundant copies.', 'info');
+  });
+}
+
+const btnDupeSelectNone = document.getElementById('btn-dupe-select-none');
+if (btnDupeSelectNone) {
+  btnDupeSelectNone.addEventListener('click', () => {
+    document.querySelectorAll('.chk-dupe-item').forEach(chk => {
+      chk.checked = false;
+    });
+    showToast('Cleared all duplicate selections.', 'info');
   });
 }
 
@@ -1816,6 +1994,322 @@ function debouncedTriggerPreview() {
   }, 320);
 }
 
+// ============================================================================
+// WATERMARK PRESETS ENGINE
+// ============================================================================
+let watermarkPresets = [];
+let activePresetId = null;
+
+const selWatermarkPreset = document.getElementById('sel-watermark-preset');
+const btnPresetSaveNew = document.getElementById('btn-preset-save-new');
+const btnPresetUpdate = document.getElementById('btn-preset-update');
+const btnPresetDelete = document.getElementById('btn-preset-delete');
+const modalSavePreset = document.getElementById('modal-save-preset');
+const txtPresetNameInput = document.getElementById('txt-preset-name-input');
+const btnModalConfirmSavePreset = document.getElementById('btn-modal-confirm-save-preset');
+
+function collectCurrentPresetConfig() {
+  const mode = document.getElementById('sel-watermark-mode')?.value || 'text';
+  const textStr = document.getElementById('txt-watermark-string')?.value || 'PROOF ONLY';
+  const pos = document.getElementById('sel-watermark-pos')?.value || 'diagonal_grid';
+  const opacity = (parseFloat(document.getElementById('rng-watermark-opacity')?.value || '35')) / 100;
+  const fontScale = (parseFloat(document.getElementById('rng-watermark-fontscale')?.value || '4')) / 100;
+  const colorHex = document.getElementById('col-watermark-color')?.value || '#FFFFFF';
+  const shadow = !!document.getElementById('chk-watermark-shadow')?.checked;
+
+  const logoPath = document.getElementById('txt-watermark-logo-path')?.value || '';
+  const logoPos = document.getElementById('sel-watermark-logo-pos')?.value || 'bottom-right';
+  const logoOpacity = (parseFloat(document.getElementById('rng-watermark-logo-opacity')?.value || '80')) / 100;
+  const logoScale = (parseFloat(document.getElementById('rng-watermark-logo-scale')?.value || '18')) / 100;
+
+  const maxDim = parseInt(document.getElementById('sel-watermark-res')?.value || '2048');
+  const isOrigRes = !!document.getElementById('chk-watermark-orig-res')?.checked;
+  const quality = parseInt(document.getElementById('rng-watermark-quality')?.value || '80');
+
+  const outMode = document.getElementById('sel-watermark-out-mode')?.value || 'original_subfolder';
+  const subfolderType = document.getElementById('sel-watermark-subfolder-type')?.value || 'suffix';
+  const subfolderName = document.getElementById('txt-watermark-subfolder-name')?.value.trim() || '_proofs';
+  const suffix = document.getElementById('txt-watermark-suffix')?.value || '_proof';
+
+  return {
+    watermark_type: mode,
+    text: textStr,
+    position: pos,
+    opacity: opacity,
+    font_scale: fontScale,
+    color_hex: colorHex,
+    shadow: shadow,
+    logo_path: logoPath,
+    logo_position: logoPos,
+    logo_opacity: logoOpacity,
+    logo_scale: logoScale,
+    max_dimension: isOrigRes ? 0 : maxDim,
+    is_original_res: isOrigRes,
+    quality: quality,
+    output_mode: outMode,
+    subfolder_type: subfolderType,
+    subfolder_name: subfolderName,
+    suffix: suffix
+  };
+}
+
+async function loadWatermarkPresets(targetPresetIdToSelect = null) {
+  try {
+    const res = await fetch(API_BASE + '/api/proofing/presets');
+    if (!res.ok) return;
+    const data = await res.json();
+    watermarkPresets = data.presets || [];
+
+    if (!selWatermarkPreset) return;
+    selWatermarkPreset.innerHTML = '';
+
+    const builtins = watermarkPresets.filter(p => p.is_builtin);
+    const customs = watermarkPresets.filter(p => !p.is_builtin);
+
+    if (builtins.length > 0) {
+      const grpBuiltin = document.createElement('optgroup');
+      grpBuiltin.label = '✨ Built-in Presets';
+      builtins.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.innerText = p.name;
+        grpBuiltin.appendChild(opt);
+      });
+      selWatermarkPreset.appendChild(grpBuiltin);
+    }
+
+    if (customs.length > 0) {
+      const grpCustom = document.createElement('optgroup');
+      grpCustom.label = '👤 Custom Saved Presets';
+      customs.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.innerText = p.name;
+        grpCustom.appendChild(opt);
+      });
+      selWatermarkPreset.appendChild(grpCustom);
+    }
+
+    const selectId = targetPresetIdToSelect || activePresetId || watermarkPresets[0]?.id;
+    if (selectId && watermarkPresets.some(p => p.id === selectId)) {
+      selWatermarkPreset.value = selectId;
+      activePresetId = selectId;
+    } else if (watermarkPresets.length > 0) {
+      selWatermarkPreset.value = watermarkPresets[0].id;
+      activePresetId = watermarkPresets[0].id;
+    }
+
+    updatePresetButtonsUI();
+  } catch (e) {
+    console.error('Failed to load presets:', e);
+  }
+}
+
+function updatePresetButtonsUI() {
+  const curPreset = watermarkPresets.find(p => p.id === activePresetId);
+  const isCustom = curPreset && !curPreset.is_builtin;
+
+  if (btnPresetUpdate) btnPresetUpdate.style.display = isCustom ? 'inline-block' : 'none';
+  if (btnPresetDelete) btnPresetDelete.style.display = isCustom ? 'inline-block' : 'none';
+}
+
+function applyWatermarkPreset(preset, notify = true) {
+  if (!preset || !preset.config) return;
+  const cfg = preset.config;
+  activePresetId = preset.id;
+
+  // 1. Watermark Mode
+  const mode = cfg.watermark_type || 'text';
+  if (selWatermarkMode) {
+    selWatermarkMode.value = mode;
+    if (boxWatermarkText) boxWatermarkText.style.display = (mode === 'text' || mode === 'both') ? 'flex' : 'none';
+    if (boxWatermarkLogo) boxWatermarkLogo.style.display = (mode === 'logo' || mode === 'both') ? 'flex' : 'none';
+  }
+
+  // 2. Text Watermark Settings
+  if (cfg.text !== undefined && document.getElementById('txt-watermark-string')) {
+    document.getElementById('txt-watermark-string').value = cfg.text;
+  }
+  if (cfg.position && document.getElementById('sel-watermark-pos')) {
+    document.getElementById('sel-watermark-pos').value = cfg.position;
+  }
+  if (cfg.opacity !== undefined && rngOpacity && lblValOpacity) {
+    const opVal = cfg.opacity <= 1.0 ? Math.round(cfg.opacity * 100) : cfg.opacity;
+    rngOpacity.value = opVal;
+    lblValOpacity.innerText = opVal + '%';
+  }
+  if (cfg.font_scale !== undefined && rngFontScale && lblValFontScale) {
+    const fsVal = cfg.font_scale <= 0.2 ? Math.round(cfg.font_scale * 100) : cfg.font_scale;
+    rngFontScale.value = fsVal;
+    lblValFontScale.innerText = fsVal + '%';
+  }
+  if (cfg.color_hex && document.getElementById('col-watermark-color')) {
+    document.getElementById('col-watermark-color').value = cfg.color_hex;
+  }
+  if (cfg.shadow !== undefined && document.getElementById('chk-watermark-shadow')) {
+    document.getElementById('chk-watermark-shadow').checked = !!cfg.shadow;
+  }
+
+  // 3. Logo Watermark Settings
+  if (cfg.logo_path !== undefined && document.getElementById('txt-watermark-logo-path')) {
+    document.getElementById('txt-watermark-logo-path').value = cfg.logo_path;
+  }
+  if (cfg.logo_position && document.getElementById('sel-watermark-logo-pos')) {
+    document.getElementById('sel-watermark-logo-pos').value = cfg.logo_position;
+  }
+  if (cfg.logo_opacity !== undefined && rngLogoOpacity && lblValLogoOpacity) {
+    const lopVal = cfg.logo_opacity <= 1.0 ? Math.round(cfg.logo_opacity * 100) : cfg.logo_opacity;
+    rngLogoOpacity.value = lopVal;
+    lblValLogoOpacity.innerText = lopVal + '%';
+  }
+  if (cfg.logo_scale !== undefined && rngLogoScale && lblValLogoScale) {
+    const lscVal = cfg.logo_scale <= 1.0 ? Math.round(cfg.logo_scale * 100) : cfg.logo_scale;
+    rngLogoScale.value = lscVal;
+    lblValLogoScale.innerText = lscVal + '%';
+  }
+
+  // 4. Resolution & Quality
+  const isOrig = !!cfg.is_original_res;
+  const resVal = cfg.max_dimension > 0 ? cfg.max_dimension : 2048;
+  updateResUI(resVal, isOrig);
+
+  if (cfg.quality !== undefined && rngQuality && lblValQuality) {
+    rngQuality.value = cfg.quality;
+    lblValQuality.innerText = cfg.quality + '%';
+  }
+
+  // 5. Destination & Subfolder
+  if (cfg.output_mode && selWatermarkOutMode) {
+    selWatermarkOutMode.value = cfg.output_mode;
+  }
+  if (cfg.subfolder_type && selWatermarkSubfolderType) {
+    selWatermarkSubfolderType.value = cfg.subfolder_type;
+  }
+  if (cfg.subfolder_name && txtSubfolderName) {
+    txtSubfolderName.value = cfg.subfolder_name;
+  }
+  if (cfg.suffix && document.getElementById('txt-watermark-suffix')) {
+    document.getElementById('txt-watermark-suffix').value = cfg.suffix;
+  }
+
+  updateDestModeUI();
+  updatePresetButtonsUI();
+  debouncedTriggerPreview();
+
+  if (typeof debouncedSaveSessionState === 'function') {
+    debouncedSaveSessionState({ watermark_settings: { active_preset_id: preset.id } });
+  }
+
+  if (notify) {
+    showToast(`Applied preset: ${preset.name}`, 'info');
+  }
+}
+
+if (selWatermarkPreset) {
+  selWatermarkPreset.addEventListener('change', () => {
+    const pId = selWatermarkPreset.value;
+    const found = watermarkPresets.find(p => p.id === pId);
+    if (found) {
+      applyWatermarkPreset(found, true);
+    }
+  });
+}
+
+if (btnPresetSaveNew) {
+  btnPresetSaveNew.addEventListener('click', () => {
+    if (modalSavePreset) {
+      if (txtPresetNameInput) {
+        txtPresetNameInput.value = 'My Custom Preset';
+      }
+      modalSavePreset.classList.add('active');
+      setTimeout(() => txtPresetNameInput?.focus(), 150);
+    }
+  });
+}
+
+if (btnModalConfirmSavePreset) {
+  btnModalConfirmSavePreset.addEventListener('click', async () => {
+    const name = txtPresetNameInput?.value.trim() || 'Custom Preset';
+    const config = collectCurrentPresetConfig();
+
+    try {
+      const res = await fetch(API_BASE + '/api/proofing/presets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name, config: config })
+      });
+      if (res.ok) {
+        const saved = await res.json();
+        modalSavePreset?.classList.remove('active');
+        await loadWatermarkPresets(saved.id);
+        showToast(`Preset "${saved.name}" saved!`, 'success');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showToast('Error saving preset: ' + (err.detail || 'Failed'), 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      showToast('Error saving preset: ' + e, 'error');
+    }
+  });
+}
+
+if (btnPresetUpdate) {
+  btnPresetUpdate.addEventListener('click', async () => {
+    const curPreset = watermarkPresets.find(p => p.id === activePresetId);
+    if (!curPreset || curPreset.is_builtin) {
+      showToast('Built-in presets cannot be overwritten. Click "+ Save Preset" instead.', 'warning');
+      return;
+    }
+
+    const config = collectCurrentPresetConfig();
+    try {
+      const res = await fetch(API_BASE + '/api/proofing/presets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: curPreset.id, name: curPreset.name, config: config })
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        await loadWatermarkPresets(updated.id);
+        showToast(`Updated preset "${updated.name}"!`, 'success');
+      } else {
+        showToast('Error updating preset', 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      showToast('Error updating preset: ' + e, 'error');
+    }
+  });
+}
+
+if (btnPresetDelete) {
+  btnPresetDelete.addEventListener('click', async () => {
+    const curPreset = watermarkPresets.find(p => p.id === activePresetId);
+    if (!curPreset || curPreset.is_builtin) return;
+
+    if (!confirm(`Are you sure you want to delete preset "${curPreset.name}"?`)) return;
+
+    try {
+      const res = await fetch(API_BASE + `/api/proofing/presets/${curPreset.id}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        showToast(`Deleted preset "${curPreset.name}"`, 'success');
+        await loadWatermarkPresets();
+        if (watermarkPresets.length > 0) {
+          applyWatermarkPreset(watermarkPresets[0], true);
+        }
+      } else {
+        showToast('Could not delete preset', 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      showToast('Error deleting preset: ' + e, 'error');
+    }
+  });
+}
+
 // Native Folder Pickers for Proofing
 function setupFolderPicker(btnId, inputId, onSelectedCallback) {
   const btn = document.getElementById(btnId);
@@ -2232,6 +2726,10 @@ async function loadProofing() {
       const firstSrc = sourcesRes[0];
       if (selSrc) selSrc.value = firstSrc.id;
       loadPhotosFromActiveFolders(firstSrc.id);
+    }
+
+    if (watermarkPresets.length === 0) {
+      loadWatermarkPresets();
     }
   } catch (e) {
     console.error('Failed to load proofing sources:', e);
@@ -2992,7 +3490,8 @@ function collectCurrentSessionState() {
       subfolder_name: subfolderName,
       subfolder_type: document.getElementById('sel-watermark-subfolder-type')?.value || 'suffix',
       custom_dest: customDest,
-      suffix: suffix
+      suffix: suffix,
+      active_preset_id: activePresetId || 'builtin_diagonal_text'
     },
     contact_sheet_settings: {
       title: document.getElementById('txt-contact-title')?.value || '',
@@ -3103,6 +3602,12 @@ async function restoreSessionState() {
       // Resolution & Slider
       updateResUI(ws.resolution || 2048, !!ws.is_original_res);
       updateDestModeUI();
+
+      if (ws.active_preset_id) {
+        await loadWatermarkPresets(ws.active_preset_id);
+      } else {
+        await loadWatermarkPresets();
+      }
     }
 
     // 2. Custom Folders Checklist

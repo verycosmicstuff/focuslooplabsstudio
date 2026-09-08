@@ -1,4 +1,4 @@
-﻿import os
+import os
 import sys
 import time
 import shutil
@@ -124,6 +124,52 @@ class TestSaveSpace(unittest.TestCase):
         conv_size = out_video.stat().st_size
         print(f"[Test] Transcoded H.265 Video Size: {conv_size} bytes (Saved {orig_size - conv_size} bytes)")
         self.assertGreater(conv_size, 0)
+
+    def test_5_duplicate_detector_folder_pairing(self):
+        """Test that duplicate detector groups matches with folder pairing metadata."""
+        dir_a = self.test_dir / "drone_sd"
+        dir_b = self.test_dir / "drone_backup"
+        dir_a.mkdir(exist_ok=True)
+        dir_b.mkdir(exist_ok=True)
+
+        file_a = dir_a / "clip1.mp4"
+        file_b = dir_b / "clip1.mp4"
+        content = b"IDENTICAL_VIDEO_CONTENT_12345" * 1000  # ~29 KB
+        file_a.write_bytes(content)
+        file_b.write_bytes(content)
+
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR IGNORE INTO sources (path, label, drive_type) VALUES (?, ?, ?)",
+                       (str(self.test_dir), "Test Drive", "SSD"))
+        cursor.execute("SELECT id FROM sources WHERE path = ?", (str(self.test_dir),))
+        src_id = cursor.fetchone()[0]
+
+        h1 = compute_fast_hash(str(file_a), len(content))
+        cursor.execute("""
+            INSERT OR REPLACE INTO files (source_id, rel_path, abs_path, filename, ext, size_bytes, mtime, ctime, media_type, fast_hash, full_hash, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (src_id, "drone_sd/clip1.mp4", str(file_a), "clip1.mp4", ".mp4", len(content), time.time() - 100, time.time(), "video", h1, None, "active"))
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO files (source_id, rel_path, abs_path, filename, ext, size_bytes, mtime, ctime, media_type, fast_hash, full_hash, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (src_id, "drone_backup/clip1.mp4", str(file_b), "clip1.mp4", ".mp4", len(content), time.time(), time.time(), "video", h1, None, "active"))
+        conn.commit()
+
+        dupes = DuplicateDetector.find_duplicates(source_id=src_id)
+        self.assertGreaterEqual(len(dupes), 1, "Duplicate group was not found!")
+        group = next((g for g in dupes if g["primary_filename"] == "clip1.mp4"), None)
+        self.assertIsNotNone(group, "Target duplicate group not found")
+        self.assertIn("folder_pair_key", group)
+        self.assertIn("folder_pair_label", group)
+        self.assertIn("drone_sd", group["folder_pair_label"])
+        self.assertIn("drone_backup", group["folder_pair_label"])
+        self.assertIn(" ⟷ ", group["folder_pair_label"])
+        self.assertEqual(len(group["folder_paths"]), 2)
+        for f in group["files"]:
+            self.assertIn("folder_path", f)
+            self.assertIn("folder_name", f)
 
 if __name__ == "__main__":
     unittest.main()
