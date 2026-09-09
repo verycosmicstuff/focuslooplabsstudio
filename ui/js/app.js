@@ -428,14 +428,83 @@ function renderSubfolderList(subfolders) {
   });
 }
 
+let activeScanPollers = new Set();
+
+function pollScanProgress(sourceId) {
+  if (activeScanPollers.has(sourceId)) return;
+  activeScanPollers.add(sourceId);
+
+  const pollInterval = setInterval(async () => {
+    try {
+      const res = await fetch(API_BASE + '/api/sources/' + sourceId + '/scan_status');
+      if (!res.ok) {
+        clearInterval(pollInterval);
+        activeScanPollers.delete(sourceId);
+        return;
+      }
+      const data = await res.json();
+      if (data.status === 'idle' || data.status === 'completed') {
+        clearInterval(pollInterval);
+        activeScanPollers.delete(sourceId);
+        showToast('Scan complete! ' + (data.scanned || 0).toLocaleString() + ' files indexed.', 'success');
+        loadSources();
+        loadOverview();
+      } else if (data.status === 'error') {
+        clearInterval(pollInterval);
+        activeScanPollers.delete(sourceId);
+        showToast('Scan error: ' + (data.error || 'Unknown error'), 'error');
+      } else if (data.status === 'scanning' && data.scanned_count) {
+        // Live feedback in status row if on sources tab
+        const rows = document.querySelectorAll('#sources-table-body tr');
+        rows.forEach(r => {
+          if (r.innerHTML.includes('scanSource(' + sourceId + ')')) {
+            const lastTd = r.children[4];
+            if (lastTd) lastTd.textContent = data.scanned_count.toLocaleString() + ' (scanning...)';
+          }
+        });
+      }
+    } catch (e) {
+      clearInterval(pollInterval);
+      activeScanPollers.delete(sourceId);
+    }
+  }, 2500);
+}
+
 window.scanSource = async function(id) {
   try {
-    await fetch(API_BASE + '/api/sources/' + id + '/scan', { method: 'POST' });
-    alert('Scan started in background! You can continue using the app or your PC smoothly.');
+    const res = await fetch(API_BASE + '/api/sources/' + id + '/scan', { method: 'POST' });
+    if (res.ok) {
+      showToast('Scan started in background! Indexing files live...', 'info');
+      pollScanProgress(id);
+    } else {
+      const err = await res.json();
+      showToast(err.detail || 'Failed to start scan', 'error');
+    }
   } catch (e) {
-    alert('Failed to start scan: ' + e);
+    showToast('Failed to start scan: ' + e, 'error');
   }
 };
+
+const btnScanAll = document.getElementById('btn-scan-all');
+if (btnScanAll) {
+  btnScanAll.addEventListener('click', async () => {
+    if (!sourcesData || sourcesData.length === 0) {
+      showToast('No sources registered to scan.', 'info');
+      return;
+    }
+    showToast('Scanning all online sources...', 'info');
+    for (const s of sourcesData) {
+      if (s.is_online) {
+        try {
+          await fetch(API_BASE + '/api/sources/' + s.id + '/scan', { method: 'POST' });
+          pollScanProgress(s.id);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    }
+  });
+}
 
 window.deleteSource = async function(id) {
   if (!confirm('Are you sure you want to remove this source from indexing?')) return;
@@ -960,15 +1029,41 @@ function updateCandidateSavingsCells() {
 
 let transcodeFiltersBound = false;
 
+window.filterTranscodeByFolder = function(folderName) {
+  const searchInput = document.getElementById('txt-transcode-search');
+  if (searchInput) {
+    searchInput.value = folderName;
+    loadTranscoder();
+  }
+};
+
 async function loadTranscoder() {
   try {
-    // Populate drive selector if needed
+    // Ensure sourcesData is loaded
+    if (!sourcesData || sourcesData.length === 0) {
+      try {
+        const sRes = await fetch(API_BASE + '/api/sources');
+        sourcesData = await sRes.json();
+      } catch (e) {
+        console.error('Failed to load sources for transcoder:', e);
+      }
+    }
+
+    // Always keep drive/folder selector in sync with latest sourcesData
     const selDrive = document.getElementById('sel-transcode-drive');
-    if (selDrive && selDrive.children.length <= 1 && sourcesData.length > 0) {
-      selDrive.innerHTML = '<option value="">All Drives</option>';
-      sourcesData.forEach(s => {
-        selDrive.innerHTML += '<option value="' + s.id + '">' + s.label + '</option>';
-      });
+    if (selDrive && sourcesData && sourcesData.length > 0) {
+      const prevVal = selDrive.value;
+      const newHtml = '<option value="">All Drives & Folders</option>' + sourcesData.map(s => {
+        const pathSuffix = s.path && s.path !== s.label ? ' (' + s.path + ')' : '';
+        return '<option value="' + s.id + '">' + escapeHtml(s.label + pathSuffix) + '</option>';
+      }).join('');
+
+      if (selDrive.innerHTML !== newHtml) {
+        selDrive.innerHTML = newHtml;
+        if (prevVal) {
+          selDrive.value = prevVal;
+        }
+      }
     }
 
     const driveId = selDrive ? selDrive.value : '';
@@ -1162,7 +1257,7 @@ async function loadTranscoder() {
         tr.innerHTML = '<td style="text-align:center;"><input type="checkbox" class="chk-candidate-item" data-id="' + v.id + '" ' + (isChecked ? 'checked' : '') + '></td>'
           + '<td style="font-weight:600;" title="' + escapeHtml(v.abs_path) + '">' + escapeHtml(v.filename) + '</td>'
           + '<td>'
-          +   '<div class="folder-cell" title="' + escapeHtml(v.abs_path) + '">'
+          +   '<div class="folder-cell" title="Click to filter by folder: ' + escapeHtml(folderName) + '" onclick="filterTranscodeByFolder(\'' + escapeJs(folderName) + '\')" style="cursor:pointer;">'
           +     '<div class="folder-title"><span class="folder-icon">📁</span>' + escapeHtml(folderName) + '</div>'
           +     '<div class="folder-sub">' + escapeHtml(subLocation) + '</div>'
           +   '</div>'
@@ -1747,7 +1842,7 @@ document.getElementById('modal-btn-save-source').addEventListener('click', async
   const type = document.getElementById('modal-source-type').value;
 
   if (!path || !label) {
-    alert('Please provide both a directory path and a label!');
+    showToast('Please provide both a directory path and a label!', 'error');
     return;
   }
 
@@ -1760,16 +1855,26 @@ document.getElementById('modal-btn-save-source').addEventListener('click', async
   });
 
   try {
-    await fetch(API_BASE + '/api/sources', {
+    const res = await fetch(API_BASE + '/api/sources', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: path, label: label, drive_type: type, excluded_paths: excluded })
     });
+    const resData = await res.json();
+    if (!res.ok) {
+      showToast(resData.detail || 'Failed to add source', 'error');
+      return;
+    }
     modalAddSource.classList.remove('active');
+    showToast(`Source "${label}" registered! Scan started.`, 'success');
     loadOverview();
     loadSources();
+
+    if (resData.id) {
+      window.scanSource(resData.id);
+    }
   } catch (e) {
-    alert('Failed to add source: ' + e);
+    showToast('Failed to add source: ' + e, 'error');
   }
 });
 

@@ -24,34 +24,60 @@ def extract_image_meta(file_path: str) -> Dict[str, Any]:
 
     if ext in RAW_EXTS:
         try:
-            import exifread
-            with open(file_path, "rb") as f:
-                tags = exifread.process_file(f, details=False)
-                if "Image Make" in tags:
-                    meta["camera_make"] = str(tags["Image Make"]).strip()
-                if "Image Model" in tags:
-                    meta["camera_model"] = str(tags["Image Model"]).strip()
-                if "EXIF LensModel" in tags:
-                    meta["lens"] = str(tags["EXIF LensModel"]).strip()
-                if "EXIF ISOSpeedRatings" in tags:
-                    try:
-                        meta["iso"] = int(str(tags["EXIF ISOSpeedRatings"]))
-                    except:
-                        pass
-                if "EXIF ExposureTime" in tags:
-                    meta["shutter"] = str(tags["EXIF ExposureTime"])
-                if "EXIF FNumber" in tags:
-                    try:
-                        val = tags["EXIF FNumber"].values[0]
-                        meta["aperture"] = round(float(val), 1)
-                    except:
-                        pass
-                if "EXIF DateTimeOriginal" in tags:
-                    meta["capture_date"] = str(tags["EXIF DateTimeOriginal"]).strip()
-                elif "Image DateTime" in tags:
-                    meta["capture_date"] = str(tags["Image DateTime"]).strip()
+            import rawpy
+            with rawpy.imread(file_path) as raw:
+                meta["width"] = raw.sizes.width
+                meta["height"] = raw.sizes.height
+                try:
+                    thumb = raw.extract_thumb()
+                    if thumb.format == rawpy.ThumbFormat.JPEG:
+                        with Image.open(io.BytesIO(thumb.data)) as t_img:
+                            exif = t_img.getexif()
+                            if exif:
+                                for tag_id, val in exif.items():
+                                    tag = ExifTags.TAGS.get(tag_id, tag_id)
+                                    if tag == "Make" and not meta["camera_make"]:
+                                        meta["camera_make"] = str(val).strip()
+                                    elif tag == "Model" and not meta["camera_model"]:
+                                        meta["camera_model"] = str(val).strip()
+                                    elif tag in ("DateTimeOriginal", "DateTime"):
+                                        if not meta["capture_date"]:
+                                            meta["capture_date"] = str(val).strip()
+                except Exception:
+                    pass
         except Exception:
             pass
+
+        if not meta["camera_model"]:
+            try:
+                import exifread
+                with open(file_path, "rb") as f:
+                    tags = exifread.process_file(f, details=False)
+                    if "Image Make" in tags:
+                        meta["camera_make"] = str(tags["Image Make"]).strip()
+                    if "Image Model" in tags:
+                        meta["camera_model"] = str(tags["Image Model"]).strip()
+                    if "EXIF LensModel" in tags:
+                        meta["lens"] = str(tags["EXIF LensModel"]).strip()
+                    if "EXIF ISOSpeedRatings" in tags:
+                        try:
+                            meta["iso"] = int(str(tags["EXIF ISOSpeedRatings"]))
+                        except:
+                            pass
+                    if "EXIF ExposureTime" in tags:
+                        meta["shutter"] = str(tags["EXIF ExposureTime"])
+                    if "EXIF FNumber" in tags:
+                        try:
+                            val = tags["EXIF FNumber"].values[0]
+                            meta["aperture"] = round(float(val), 1)
+                        except:
+                            pass
+                    if "EXIF DateTimeOriginal" in tags:
+                        meta["capture_date"] = str(tags["EXIF DateTimeOriginal"]).strip()
+                    elif "Image DateTime" in tags:
+                        meta["capture_date"] = str(tags["Image DateTime"]).strip()
+            except Exception:
+                pass
 
     # Standard images or fallback
     if not meta["capture_date"]:

@@ -66,23 +66,74 @@ class SourceIndexer:
         self.is_running = False
 
     def scan(self):
+        start_time = time.time()
         conn = get_db()
         cursor = conn.cursor()
 
         # Update source capacity
         try:
             usage = psutil.disk_usage(str(self.root_path))
-            cursor.execute(
-                "UPDATE sources SET total_bytes = ?, free_bytes = ?, is_online = 1 WHERE id = ?",
-                (usage.total, usage.free, self.source_id)
-            )
-            conn.commit()
+            with db_transaction() as tx:
+                tx.execute(
+                    "UPDATE sources SET total_bytes = ?, free_bytes = ?, is_online = 1 WHERE id = ?",
+                    (usage.total, usage.free, self.source_id)
+                )
         except Exception:
             pass
 
         discovered_paths = set()
-        batch_files = []
-        batch_meta = []
+        pending_items = []
+
+        def flush_pending():
+            nonlocal pending_items
+            if not pending_items:
+                return
+            with db_transaction() as tx:
+                tx_cur = tx.cursor()
+                for item in pending_items:
+                    abs_str = item["abs_str"]
+                    size = item["size"]
+                    mtime = item["mtime"]
+                    ctime = item["ctime"]
+                    fast_hash = item["fast_hash"]
+                    pair_id = item["pair_id"]
+                    mtype = item["mtype"]
+                    rel_p = item["rel_p"]
+                    fname = item["fname"]
+                    ext = item["ext"]
+                    meta = item.get("meta")
+
+                    tx_cur.execute("SELECT id, size_bytes, mtime FROM files WHERE abs_path = ?", (abs_str,))
+                    row = tx_cur.fetchone()
+
+                    if row:
+                        file_id = row["id"]
+                        if row["size_bytes"] != size or abs(row["mtime"] - mtime) > 1.0:
+                            tx_cur.execute("""
+                                UPDATE files SET size_bytes = ?, mtime = ?, ctime = ?, fast_hash = ?, pair_id = ?, status = 'active'
+                                WHERE id = ?
+                            """, (size, mtime, ctime, fast_hash, pair_id, file_id))
+                    else:
+                        tx_cur.execute("""
+                            INSERT INTO files (source_id, rel_path, abs_path, filename, ext, size_bytes, mtime, ctime, media_type, fast_hash, pair_id, status)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+                        """, (self.source_id, rel_p, abs_str, fname, ext, size, mtime, ctime, mtype, fast_hash, pair_id))
+                        file_id = tx_cur.lastrowid
+
+                        if meta:
+                            tx_cur.execute("""
+                                INSERT OR REPLACE INTO media_meta 
+                                (file_id, width, height, duration_sec, video_codec, audio_codec, bitrate, fps, camera_make, camera_model, lens, iso, shutter, aperture, capture_date)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (
+                                file_id, meta.get("width"), meta.get("height"), meta.get("duration_sec"),
+                                meta.get("video_codec"), meta.get("audio_codec"), meta.get("bitrate"),
+                                meta.get("fps"), meta.get("camera_make"), meta.get("camera_model"),
+                                meta.get("lens"), meta.get("iso"), meta.get("shutter"), meta.get("aperture"),
+                                meta.get("capture_date")
+                            ))
+            pending_items = []
+
         # Load excluded subfolders for this source
         cursor.execute("SELECT excluded_paths FROM sources WHERE id = ?", (self.source_id,))
         s_row = cursor.fetchone()
@@ -169,40 +220,24 @@ class SourceIndexer:
                 elif mtype == "video":
                     meta = extract_video_meta(abs_str)
 
-                # Instantaneous atomic write
-                with db_transaction() as tx:
-                    tx_cursor = tx.cursor()
-                    tx_cursor.execute("SELECT id, size_bytes, mtime FROM files WHERE abs_path = ?", (abs_str,))
-                    row = tx_cursor.fetchone()
+                pending_items.append({
+                    "abs_str": abs_str,
+                    "size": size,
+                    "mtime": mtime,
+                    "ctime": ctime,
+                    "fast_hash": fast_hash,
+                    "pair_id": pair_id,
+                    "mtype": mtype,
+                    "rel_p": rel_p,
+                    "fname": fname,
+                    "ext": ext,
+                    "meta": meta
+                })
 
-                    if row:
-                        file_id = row["id"]
-                        if row["size_bytes"] != size or abs(row["mtime"] - mtime) > 1.0:
-                            tx_cursor.execute("""
-                                UPDATE files SET size_bytes = ?, mtime = ?, ctime = ?, fast_hash = ?, pair_id = ?
-                                WHERE id = ?
-                            """, (size, mtime, ctime, fast_hash, pair_id, file_id))
-                    else:
-                        tx_cursor.execute("""
-                            INSERT INTO files (source_id, rel_path, abs_path, filename, ext, size_bytes, mtime, ctime, media_type, fast_hash, pair_id)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (self.source_id, rel_p, abs_str, fname, ext, size, mtime, ctime, mtype, fast_hash, pair_id))
-                        file_id = tx_cursor.lastrowid
+                if len(pending_items) >= 50:
+                    flush_pending()
 
-                        if meta:
-                            tx_cursor.execute("""
-                                INSERT OR REPLACE INTO media_meta 
-                                (file_id, width, height, duration_sec, video_codec, audio_codec, bitrate, fps, camera_make, camera_model, lens, iso, shutter, aperture, capture_date)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (
-                                file_id, meta.get("width"), meta.get("height"), meta.get("duration_sec"),
-                                meta.get("video_codec"), meta.get("audio_codec"), meta.get("bitrate"),
-                                meta.get("fps"), meta.get("camera_make"), meta.get("camera_model"),
-                                meta.get("lens"), meta.get("iso"), meta.get("shutter"), meta.get("aperture"),
-                                meta.get("capture_date")
-                            ))
-
-                if self.scanned_count % 10 == 0:
+                if self.scanned_count % 25 == 0 or self.scanned_count == 1:
                     if self.progress_cb:
                         self.progress_cb({
                             "source_id": self.source_id,
@@ -212,14 +247,18 @@ class SourceIndexer:
                             "elapsed_sec": round(time.time() - start_time, 1)
                         })
 
+        # Flush any remaining items
+        flush_pending()
+
         # Update last scanned time
-        cursor.execute("UPDATE sources SET last_scanned = ? WHERE id = ?", (datetime.now().isoformat(), self.source_id))
-        conn.commit()
+        with db_transaction() as tx:
+            tx.execute("UPDATE sources SET last_scanned = ? WHERE id = ?", (datetime.now().isoformat(), self.source_id))
 
         if self.progress_cb:
             self.progress_cb({
                 "source_id": self.source_id,
                 "scanned_count": self.scanned_count,
                 "total_size": self.total_size,
-                "status": "completed"
+                "status": "completed",
+                "elapsed_sec": round(time.time() - start_time, 1)
             })

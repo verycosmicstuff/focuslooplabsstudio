@@ -320,17 +320,26 @@ def trigger_scan(source_id: int, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=404, detail="Source not found")
 
     def run_indexer():
-        scan_progress[source_id] = {"status": "scanning", "scanned": 0, "size": 0}
-        def on_prog(p):
-            scan_progress[source_id] = p
-        
-        indexer = SourceIndexer(source_id, row["path"], progress_cb=on_prog)
-        indexer.scan()
+        try:
+            scan_progress[source_id] = {"status": "scanning", "scanned": 0, "size": 0}
+            def on_prog(p):
+                scan_progress[source_id] = p
+            
+            indexer = SourceIndexer(source_id, row["path"], progress_cb=on_prog)
+            indexer.scan()
+            scan_progress[source_id] = {"status": "idle", "scanned": indexer.scanned_count}
+            logger.info(f"Source {source_id} scan completed: {indexer.scanned_count} files indexed.")
 
-        # Run blur analysis in background
-        culler = CullingEngine()
-        culler.analyze_source(source_id)
-        scan_progress[source_id] = {"status": "idle", "scanned": indexer.scanned_count}
+            # Run blur analysis in background without blocking scan completion
+            try:
+                culler = CullingEngine()
+                culler.analyze_source(source_id)
+            except Exception as e_cull:
+                logger.warning(f"Background culling analysis note for source {source_id}: {e_cull}")
+
+        except Exception as e:
+            logger.error(f"Error during scan of source {source_id}: {e}", exc_info=True)
+            scan_progress[source_id] = {"status": "error", "error": str(e)}
 
     background_tasks.add_task(run_indexer)
     return {"message": "Scan started in background"}
@@ -524,8 +533,9 @@ def get_transcode_candidates(
         params.append(f"%{codec.lower()}%")
 
     if search:
-        query += " AND LOWER(f.filename) LIKE ?"
-        params.append(f"%{search.lower()}%")
+        search_pattern = f"%{search.lower()}%"
+        query += " AND (LOWER(f.filename) LIKE ? OR LOWER(f.rel_path) LIKE ? OR LOWER(f.abs_path) LIKE ? OR LOWER(s.label) LIKE ?)"
+        params.extend([search_pattern, search_pattern, search_pattern, search_pattern])
 
     query += " ORDER BY f.size_bytes DESC"
     cursor.execute(query, params)

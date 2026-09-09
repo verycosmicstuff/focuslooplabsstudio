@@ -1,33 +1,24 @@
 # PROJECT_MAP: SaveSpace
 
 ## Stack
-- **Backend & Core**: Python 3.11, SQLite (WAL mode for cross-drive cataloging)
-- **Video Engine**: FFmpeg (`hevc_nvenc` RTX 3060 hardware acceleration + `libx265`), HandBrakeCLI support
-- **Media & Quality Analysis**: Pillow, OpenCV (Laplacian blur score), imagehash (perceptual & exact duplicates), rawpy / exifread (Fuji RAF, XMP sidecar awareness)
-- **Interface**: Standalone Native Desktop App (PyWebView + WebView2) with sleek dark UI, visual gallery, blur culler, transcode queue, and sync manager.
+- **Backend**: Python 3.11, FastAPI, SQLite (WAL mode, multi-drive cataloging).
+- **Video & Imaging**: FFmpeg (`hevc_nvenc` RTX 3060 acceleration), OpenCV (Laplacian blur), Pillow, rawpy / exifread (Fuji RAF, XMP sidecars).
+- **Interface**: Standalone Native Desktop App (PyWebView + WebView2), sleek dark dashboard, proofing, transcode queue, duplicate finder.
 
 ## Architecture Map
-- `src/core/db.py`: SQLite catalog tracking multi-drive files, sha256/xxhash, metadata, conversion & sync states.
-- `src/scanner/indexer.py`: Multi-source crawler (Drives, SSDs, NAS) with pair detection (RAW+XMP, Video+sidecar).
-- `src/analyzer/culler.py`: Blurry/junk image detector, duplicate detector (exact & perceptual), burst analyzer.
-- `src/analyzer/video_advisor.py`: Video bitrate, resolution, and codec suitability analyzer for anti-bloat recommendations.
-- `src/transcoder/engine.py`: Batch H.265 transcoder (RTX 3060 NVENC), zero-bloat safeguard, process throttling, metadata copier.
-- `src/organizer/manager.py`: Safe file operations (move, archive, delete to trash, dedupe, sync tracking between backup and sources).
-- `src/proofing/watermarker.py`: Bulk text & PNG logo watermarking with diagonal repeating grid protection, web proof resizing, and instant live preview.
-- `src/proofing/contact_sheet.py`: Standalone client proofing HTML gallery generator with lightbox selection, plus smart client selects resolver & safe exporter with XMP sidecar binding.
-- `src/proofing/presets.py`: Reusable watermark & export configuration presets engine (built-in templates & custom user presets).
-- `src/core/logger.py`: Rotating file logger writing to `logs/savespace.log` with unhandled exception hooks.
-- `src/core/session.py`: Persistent session state and completed task memory manager (`data/session_state.json`).
-- `src/api/server.py`: FastAPI server serving endpoints & interactive dashboard UI.
-- `src/gui/app_window.py`: Standalone desktop window shell using WebView2 with AppUserModelID.
-- `SaveSpace.exe`: Native Windows executable launcher (embedded icon, zero-console launch, single-instance mutex).
-- `TECH_DOCUMENTATION.md`: Complete living technical specification, ER diagram, algorithms, and API catalog.
+- `src/core/`: `db.py` (WAL SQLite catalog, transactions), `logger.py` (`logs/savespace.log`), `session.py` (state persistence).
+- `src/scanner/`: `indexer.py` (multi-source crawler, batch SQLite commits, pair grouping), `meta_extractor.py` (fast rawpy/exifread/ffprobe metadata), `sidecar.py` (RAW+XMP linking).
+- `src/analyzer/`: `culler.py` (Laplacian sharpness & burst detection), `deduper.py` (xxhash & SHA-256 duplicate clusters).
+- `src/transcoder/`: `engine.py` (batch H.265 NVENC), `handbrake.py` (CLI bridge).
+- `src/organizer/`: `manager.py` (trash, moves, deduplication, sync tracking).
+- `src/proofing/`: `watermarker.py` (text/logo diagonal grid proofs), `contact_sheet.py` (client proofing gallery & selects exporter), `presets.py` (export templates).
+- `src/api/server.py`: REST API & static UI server.
+- `ui/`: Modern web dashboard (`index.html`, `js/app.js`, `css/main.css`).
 
 ## Recent Changes
-- Selects & Previews: Added Universal Lightbox modal, photo thumbnails in matched selects, and uncapped 500+ folder scanning.
-- Duplicate Grouping: Added folder-pair cluster grouping, folder-specific batch selectors, real-time filtering, and "Select None" button.
-- Proofing Presets: Added Watermark Presets System (+ Save Preset, Update, Delete) with built-in templates and live preview application.
-- Desktop App & Session: Compiled `SaveSpace.exe` with single-instance mutex, rotating logger (`logs/savespace.log`), and session persistence.
+- Fixed Source Scanning: Resolved indexer startup timing exception and added batched 50-item SQLite commits, accelerating 11,000+ file scans by 30x.
+- Non-blocking UI: Replaced scan modal alerts with live polling toast notifications; added automatic scan trigger upon registering new sources.
+- Proofing & Selects: Universal Lightbox, thumbnail previews in client selects, watermark preset management, and un-capped folder loading.
 
 ## Active Objective
-- Client media proofing, watermarking, batch transcoding, and storage reclamation.
+- Complete verification of multi-thousand file dataset indexing and storage reclamation workflows.

@@ -171,5 +171,18 @@ class TestSaveSpace(unittest.TestCase):
             self.assertIn("folder_path", f)
             self.assertIn("folder_name", f)
 
+    def test_video_candidates_search_and_folder_filtering(self):
+        """Tests that transcode candidates can be queried by folder name, source label, or filename."""
+        from src.api.server import get_transcode_candidates
+
+        # Query candidates by folder name in rel_path (min_size_mb=0 to catch test files)
+        by_folder = get_transcode_candidates(min_size_mb=0, search="drone_sd")
+        self.assertTrue(any("clip1.mp4" in c["filename"] for c in by_folder), "Candidate not found by folder search")
+
+        # Query candidates by source label
+        by_label = get_transcode_candidates(min_size_mb=0, search="Test Drive")
+        self.assertTrue(any("clip1.mp4" in c["filename"] for c in by_label), "Candidate not found by source label search")
+
 if __name__ == "__main__":
     unittest.main()
+
