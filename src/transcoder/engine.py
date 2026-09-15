@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional, Callable, Dict, Any
 import psutil
 
+import sys
 from src.config import FFMPEG_PATH, FFPROBE_PATH, PERFORMANCE_MODES
 from src.core.db import get_db, db_transaction
 
@@ -17,33 +18,58 @@ IDLE_PRIORITY_CLASS = 0x00000040
 CREATE_NO_WINDOW = 0x08000000
 
 TRANSCODE_PROFILES = {
+    # Apple Silicon VideoToolbox Profiles (macOS hardware media engine)
+    "vt_hq_10bit": {
+        "name": "Apple VideoToolbox 10-Bit HQ (M1/M2/M3/M4 Hardware)",
+        "desc": "Hardware-accelerated HEVC 10-bit preservation using Apple Silicon Media Engine with QuickTime/Finder tag compatibility.",
+        "vcodec": "hevc_videotoolbox",
+        "params": ["-q:v", "65", "-pix_fmt", "p010le", "-tag:v", "hvc1"],
+        "acodec": "copy"
+    },
+    "vt_lossless": {
+        "name": "Apple VideoToolbox Ultra Master (High Bitrate)",
+        "desc": "Pristine Apple Silicon hardware transcode for camera master archives.",
+        "vcodec": "hevc_videotoolbox",
+        "params": ["-q:v", "80", "-pix_fmt", "p010le", "-tag:v", "hvc1"],
+        "acodec": "copy"
+    },
+    "vt_compact": {
+        "name": "Apple VideoToolbox Space Saver",
+        "desc": "Maximum storage reclamation (65-80% smaller) for sharing and dailies.",
+        "vcodec": "hevc_videotoolbox",
+        "params": ["-q:v", "50", "-pix_fmt", "p010le", "-tag:v", "hvc1"],
+        "acodec": "aac",
+        "audio_bitrate": "192k"
+    },
+    # NVIDIA NVENC Profiles (Windows / Linux)
     "nvenc_hq_10bit": {
         "name": "NVIDIA NVENC High Quality 10-Bit (Recommended for Fuji)",
-        "desc": "Visually lossless HEVC/H.265 using RTX 3060 hardware encoder with 10-bit color preservation for F-Log/ProRes.",
+        "desc": "Visually lossless HEVC/H.265 using RTX hardware encoder with 10-bit color preservation for F-Log/ProRes.",
         "vcodec": "hevc_nvenc",
-        "params": ["-preset", "p6", "-tune", "hq", "-rc", "vbr", "-cq", "22", "-pix_fmt", "p010le"],
+        "params": ["-preset", "p6", "-tune", "hq", "-rc", "vbr", "-cq", "22", "-pix_fmt", "p010le", "-tag:v", "hvc1"],
         "acodec": "copy"
     },
     "nvenc_lossless": {
         "name": "NVIDIA NVENC Ultra Master (CQ 18)",
         "desc": "Pristine archival quality, near identical to original high bitrate camera footage.",
         "vcodec": "hevc_nvenc",
-        "params": ["-preset", "p7", "-tune", "hq", "-rc", "vbr", "-cq", "18", "-pix_fmt", "p010le"],
+        "params": ["-preset", "p7", "-tune", "hq", "-rc", "vbr", "-cq", "18", "-pix_fmt", "p010le", "-tag:v", "hvc1"],
         "acodec": "copy"
     },
     "nvenc_compact": {
         "name": "NVIDIA NVENC Maximum Space Saving (CQ 26)",
         "desc": "Aggressive file size reduction (75-85% smaller) while retaining crisp 4K playback.",
         "vcodec": "hevc_nvenc",
-        "params": ["-preset", "p5", "-rc", "vbr", "-cq", "26", "-pix_fmt", "p010le"],
+        "params": ["-preset", "p5", "-rc", "vbr", "-cq", "26", "-pix_fmt", "p010le", "-tag:v", "hvc1"],
         "acodec": "aac",
         "audio_bitrate": "192k"
     },
+    # Universal Software Profile
     "cpu_x265_hq": {
         "name": "CPU libx265 (High Efficiency Software Encoder)",
         "desc": "Maximum compression efficiency using CPU cores.",
         "vcodec": "libx265",
-        "params": ["-crf", "22", "-preset", "medium", "-pix_fmt", "yuv420p10le"],
+        "params": ["-crf", "22", "-preset", "medium", "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1"],
         "acodec": "copy"
     }
 }
@@ -94,7 +120,12 @@ class TranscodeJob:
             self._update_db_error("FFmpeg executable not found")
             return False
 
-        profile = TRANSCODE_PROFILES.get(self.profile_key, TRANSCODE_PROFILES["nvenc_hq_10bit"])
+        # On macOS, auto-alias NVENC profile requests to native VideoToolbox
+        profile_key = self.profile_key
+        if sys.platform == "darwin":
+            if profile_key.startswith("nvenc_") or profile_key not in TRANSCODE_PROFILES:
+                profile_key = "vt_hq_10bit"
+        profile = TRANSCODE_PROFILES.get(profile_key, TRANSCODE_PROFILES["vt_hq_10bit" if sys.platform == "darwin" else "nvenc_hq_10bit"])
         perf = PERFORMANCE_MODES.get(self.perf_mode, PERFORMANCE_MODES["balanced"])
 
         # Create output directory
@@ -134,24 +165,33 @@ class TranscodeJob:
             str(self.output_path)
         ])
 
-        # Windows Process Priority Flags
-        flags = CREATE_NO_WINDOW
-        if perf["os_priority"] == "IDLE":
-            flags |= IDLE_PRIORITY_CLASS
-        elif perf["os_priority"] == "BELOW_NORMAL":
-            flags |= BELOW_NORMAL_PRIORITY_CLASS
+        # Subprocess spawn arguments (creationflags is Windows-only)
+        popen_kwargs = {
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "text": True,
+            "bufsize": 1
+        }
+        if sys.platform == "win32":
+            flags = CREATE_NO_WINDOW
+            if perf["os_priority"] == "IDLE":
+                flags |= IDLE_PRIORITY_CLASS
+            elif perf["os_priority"] == "BELOW_NORMAL":
+                flags |= BELOW_NORMAL_PRIORITY_CLASS
+            popen_kwargs["creationflags"] = flags
 
         self._update_db_status("transcoding")
 
         try:
-            self.process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                creationflags=flags,
-                text=True,
-                bufsize=1
-            )
+            self.process = subprocess.Popen(cmd, **popen_kwargs)
+
+            # Set POSIX process nice level if on macOS/Linux
+            if sys.platform != "win32" and perf.get("os_priority") in ("IDLE", "BELOW_NORMAL"):
+                try:
+                    p = psutil.Process(self.process.pid)
+                    p.nice(10 if perf["os_priority"] == "BELOW_NORMAL" else 19)
+                except Exception:
+                    pass
 
             # Continually drain stderr in a daemon thread to prevent pipe buffer deadlock
             stderr_lines = collections.deque(maxlen=40)

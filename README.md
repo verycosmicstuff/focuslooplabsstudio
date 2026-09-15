@@ -48,28 +48,34 @@ Focusloop Studio is a high-performance, standalone desktop application built to 
 ## 🚀 Getting Started
 
 ### Prerequisites
-1. **Python 3.11+** installed on Windows.
-2. **NVIDIA GPU** (RTX series recommended) with updated drivers for NVENC hardware acceleration.
-3. **FFmpeg** and **FFprobe** installed and accessible in system `PATH` (or configured via environment variable).
+* **Windows**: Windows 10/11 64-bit, Python 3.11+, NVIDIA GPU recommended (for NVENC H.265 acceleration).
+* **macOS**: macOS 12+ (Apple Silicon M1/M2/M3/M4 or Intel), Python 3.11+, FFmpeg (`brew install ffmpeg`).
+* **Linux**: Ubuntu 22.04+, Debian, Arch, or Fedora, Python 3.11+, FFmpeg.
 
-### Installation
+### Quick Start
+
+#### Option 1: Standalone Portable Packages (No Terminal Setup)
+* **Windows**: Download `FocusloopLabs-v1.0-Portable.zip` from [Releases](https://github.com/verycosmicstuff/focuslooplabsstudio/releases). Unzip anywhere and double-click `FocusloopLabs.exe`.
+* **macOS (Apple Silicon)**: Download `FocusloopStudio-v1.0-macOS-arm64-Portable.zip` from [Releases](https://github.com/verycosmicstuff/focuslooplabsstudio/releases). Unzip and open `Focusloop Studio.app` *(Right-click -> Open on first launch)*.
+
+#### Option 2: Run From Source
 
 1. **Clone the repository**:
-   ```powershell
+   ```bash
    git clone https://github.com/verycosmicstuff/focuslooplabsstudio.git
    cd focuslooplabsstudio
    ```
 
-2. **Install dependencies**:
-   ```powershell
-   pip install -r requirements.txt
-   ```
-
-3. **Launch the application**:
-   - Double-click `run_savespace.bat` or run:
-   ```powershell
-   python main.py
-   ```
+2. **Launch Application**:
+   * **Windows**: Double-click `run_focusloop.bat` or run:
+     ```powershell
+     python -m src.gui.app_window
+     ```
+   * **macOS / Linux**: Run the POSIX launcher script:
+     ```bash
+     chmod +x run_focusloop.sh
+     ./run_focusloop.sh
+     ```
 
 ---
 

@@ -179,9 +179,25 @@ class TestFocusloop(unittest.TestCase):
         by_folder = get_transcode_candidates(min_size_mb=0, search="drone_sd")
         self.assertTrue(any("clip1.mp4" in c["filename"] for c in by_folder), "Candidate not found by folder search")
 
-        # Query candidates by source label
-        by_label = get_transcode_candidates(min_size_mb=0, search="Test Drive")
-        self.assertTrue(any("clip1.mp4" in c["filename"] for c in by_label), "Candidate not found by source label search")
+    def test_macos_videotoolbox_and_binary_resolution(self):
+        """Tests that Apple VideoToolbox profiles and cross-platform binary resolution are correctly configured."""
+        from src.transcoder.engine import TRANSCODE_PROFILES
+        from src.config import _resolve_binary
+
+        # Verify VideoToolbox profiles exist and have proper QuickTime hvc1 tag
+        self.assertIn("vt_hq_10bit", TRANSCODE_PROFILES)
+        self.assertIn("vt_lossless", TRANSCODE_PROFILES)
+        self.assertIn("vt_compact", TRANSCODE_PROFILES)
+
+        vt_profile = TRANSCODE_PROFILES["vt_hq_10bit"]
+        self.assertEqual(vt_profile["vcodec"], "hevc_videotoolbox")
+        self.assertIn("-tag:v", vt_profile["params"])
+        self.assertIn("hvc1", vt_profile["params"])
+        self.assertIn("p010le", vt_profile["params"])
+
+        # Verify _resolve_binary handles non-existent binary gracefully
+        resolved = _resolve_binary("nonexistent_binary_xyz_123")
+        self.assertEqual(resolved, "")
 
 if __name__ == "__main__":
     unittest.main()

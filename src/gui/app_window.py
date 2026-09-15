@@ -27,7 +27,7 @@ def run_app():
     # Launch PyWebView native Windows desktop window
     url = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
     window = webview.create_window(
-        title="Focusloop Labs — Studio Assistant & Media Manager",
+        title="Focusloop Studio — Studio Assistant & Media Manager",
         url=url,
         width=1400,
         height=900,

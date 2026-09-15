@@ -17,11 +17,11 @@
 - `ui/`: Responsive dark dashboard (`index.html`, `js/app.js`, `css/app.css`).
 
 ## Recent Changes
-- Rebranded to Focusloop Labs with official site `https://focuslooplabs.vercel.app/` and added early-access responsibility notice (`DISCLAIMER.txt`) to Inno Setup installer.
-- Built 1-click Windows installer `dist/Focusloop-Labs-Setup-v1.0.0.exe` (124.8 MB) and portable distribution `dist/FocusloopLabs-v1.0-Portable.zip` (192.5 MB).
-- Added Duplicate Pair Omission ("🚫 Omit this Pair" & Omitted Pairs management modal) to hide intentional duplicate folders (e.g. Leela selects).
-- Added Folder Selection dropdown & "⭐ Keep" button to Blur & Burst Culler (card action & Lightbox preview modal) to preserve intentional soft shots.
-- Purged and permanently excluded Windows `$RECYCLE.BIN` / `$I...` ghost entries from scanner and culler.
+- Added cross-platform macOS support: Apple VideoToolbox (`hevc_videotoolbox` with `-tag:v hvc1`) hardware transcoding, Homebrew binary discovery, and Cocoa data/log directory resolution.
+- Added `run_focusloop.sh` POSIX shell launcher and `.github/workflows/build-macos.yml` for automated Apple Silicon (`macos-14`) standalone portable `.app` bundle builds.
+- Added MIT LICENSE, 29/29 unit tests passing.
+- Rebranded to Focusloop Studio with official site `https://focuslooplabs.vercel.app/` and live portable release download.
 
 ## Active Objective
-- Assist user with testing installer deployment and verifying duplicate/culling workflows.
+- Assist user with macOS workflow trigger, verification, and feedback.
+

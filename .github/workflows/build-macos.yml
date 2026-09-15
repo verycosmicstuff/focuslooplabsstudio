@@ -1,0 +1,96 @@
+﻿name: Build macOS Portable Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+
+jobs:
+  build-macos:
+    name: Build macOS (Apple Silicon arm64)
+    runs-on: macos-14
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install system FFmpeg & build tools
+        run: |
+          brew install ffmpeg
+          mkdir -p bin
+          cp $(which ffmpeg) bin/ffmpeg
+          cp $(which ffprobe) bin/ffprobe
+          chmod +x bin/ffmpeg bin/ffprobe
+          echo "FFmpeg staged in bin/:"
+          ls -lh bin/
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install "pywebview[cocoa]" pyinstaller
+
+      - name: Run test suite on macOS
+        run: |
+          python -m unittest discover -s tests
+
+      - name: Compile Standalone macOS Application (.app)
+        run: |
+          pyinstaller \
+            --name "Focusloop Studio" \
+            --windowed \
+            --noconfirm \
+            --clean \
+            --add-data "ui:ui" \
+            --add-data "bin:bin" \
+            --hidden-import "uvicorn.logging" \
+            --hidden-import "uvicorn.loops" \
+            --hidden-import "uvicorn.loops.auto" \
+            --hidden-import "uvicorn.protocols" \
+            --hidden-import "uvicorn.protocols.http" \
+            --hidden-import "uvicorn.protocols.http.auto" \
+            --hidden-import "uvicorn.lifespan" \
+            --hidden-import "uvicorn.lifespan.on" \
+            --hidden-import "src.api.server" \
+            --hidden-import "src.core.session" \
+            --hidden-import "src.analyzer.culler" \
+            --hidden-import "src.analyzer.deduper" \
+            --hidden-import "src.transcoder.engine" \
+            --hidden-import "src.proofing.watermarker" \
+            --hidden-import "src.proofing.contact_sheet" \
+            src/gui/app_window.py
+
+      - name: Package Portable ZIP (Preserving Symlinks & Permissions)
+        run: |
+          cd dist
+          ditto -c -k --keepParent "Focusloop Studio.app" FocusloopStudio-v1.0-macOS-arm64-Portable.zip
+          ls -lh FocusloopStudio-v1.0-macOS-arm64-Portable.zip
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FocusloopStudio-macOS-Portable
+          path: dist/FocusloopStudio-v1.0-macOS-arm64-Portable.zip
+
+      - name: Attach to GitHub Release (If Tagged)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "Uploading portable zip to release $TAG_NAME..."
+            gh release upload "$TAG_NAME" dist/FocusloopStudio-v1.0-macOS-arm64-Portable.zip --clobber || true
+          fi

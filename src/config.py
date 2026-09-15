@@ -20,11 +20,14 @@ def _resolve_data_dir() -> Path:
         test_file.unlink()
         return local_data
     except Exception:
-        # Fall back to user AppData if local directory is read-only (e.g. Program Files)
-        appdata = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or str(Path.home())
-        fallback = Path(appdata) / "FocusloopLabs" / "data"
-        if not fallback.exists() and (Path(appdata) / "SaveSpace" / "data").exists():
-            fallback = Path(appdata) / "SaveSpace" / "data"
+        # Fall back to user Application Support on macOS or AppData on Windows
+        if sys.platform == "darwin":
+            fallback = Path.home() / "Library" / "Application Support" / "FocusloopLabs" / "data"
+        else:
+            appdata = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or str(Path.home())
+            fallback = Path(appdata) / "FocusloopLabs" / "data"
+            if not fallback.exists() and (Path(appdata) / "SaveSpace" / "data").exists():
+                fallback = Path(appdata) / "SaveSpace" / "data"
         fallback.mkdir(parents=True, exist_ok=True)
         return fallback
 
@@ -41,7 +44,10 @@ def _resolve_logs_dir(data_dir: Path) -> Path:
             return local_logs
         except Exception:
             pass
-    fallback_logs = data_dir.parent / "logs"
+    if sys.platform == "darwin":
+        fallback_logs = Path.home() / "Library" / "Logs" / "FocusloopLabs"
+    else:
+        fallback_logs = data_dir.parent / "logs"
     fallback_logs.mkdir(parents=True, exist_ok=True)
     return fallback_logs
 
@@ -72,16 +78,26 @@ ALL_MEDIA_EXTS = RAW_EXTS | PHOTO_EXTS | VIDEO_EXTS | SIDECAR_EXTS
 # Detection of external utilities
 def _resolve_binary(name: str) -> str:
     # 1. Bundled local bin folder inside app (portable / installed distribution)
-    bundled = BASE_DIR / "bin" / f"{name}.exe"
-    if bundled.is_file():
-        return str(bundled)
+    for candidate in [BASE_DIR / "bin" / name, BASE_DIR / "bin" / f"{name}.exe"]:
+        if candidate.is_file():
+            return str(candidate)
     
     # 2. System PATH
     found = shutil.which(name)
     if found:
         return found
 
-    # 3. Known Chocolatey paths
+    # 3. macOS Homebrew & standard UNIX paths
+    mac_paths = [
+        Path(f"/opt/homebrew/bin/{name}"),     # Apple Silicon Homebrew
+        Path(f"/usr/local/bin/{name}"),        # Intel Homebrew / MacPorts
+        Path(f"/usr/bin/{name}"),              # Standard system
+    ]
+    for mp in mac_paths:
+        if mp.is_file():
+            return str(mp)
+
+    # 4. Windows Chocolatey paths
     choco_direct = Path(r"C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\bin") / f"{name}.exe"
     if choco_direct.is_file():
         return str(choco_direct)
@@ -89,7 +105,7 @@ def _resolve_binary(name: str) -> str:
     if fallback.is_file():
         return str(fallback)
 
-    # 4. Known WinGet paths
+    # 5. Windows WinGet paths
     winget_base = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WinGet" / "Packages"
     if winget_base.is_dir():
         try:
@@ -105,8 +121,12 @@ FFMPEG_PATH = _resolve_binary("ffmpeg")
 FFPROBE_PATH = _resolve_binary("ffprobe")
 
 HANDBRAKE_PATHS = [
+    str(BASE_DIR / "bin" / "HandBrakeCLI"),
     str(BASE_DIR / "bin" / "HandBrakeCLI.exe"),
     shutil.which("HandBrakeCLI") or "",
+    "/opt/homebrew/bin/HandBrakeCLI",
+    "/usr/local/bin/HandBrakeCLI",
+    "/Applications/HandBrake.app/Contents/MacOS/HandBrakeCLI",
     r"C:\Program Files\HandBrake\HandBrakeCLI.exe",
     r"C:\Program Files\HandBrake\HandBrake.exe",
 ]
