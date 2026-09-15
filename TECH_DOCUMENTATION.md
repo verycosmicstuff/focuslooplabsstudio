@@ -357,7 +357,7 @@ Photo galleries with high-resolution mirrorless RAW files (Fuji 40MP, Sony 61MP)
 ### 7.1 Running Tests
 All backend tests are executed using Python 3.11:
 ```powershell
-& "C:\Users\Sunny\AppData\Local\Programs\Python\Python311\python.exe" -m unittest discover tests
+python -m unittest discover tests
 ```
 
 ### 7.2 Adding New Transcoding Profiles
