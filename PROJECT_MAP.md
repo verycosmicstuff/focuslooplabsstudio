@@ -20,8 +20,10 @@
 - Added cross-platform macOS support: Apple VideoToolbox (`hevc_videotoolbox` with `-tag:v hvc1`) hardware transcoding, Homebrew binary discovery, and Cocoa data/log directory resolution.
 - Added `run_focusloop.sh` POSIX shell launcher and `.github/workflows/build-macos.yml` for automated Apple Silicon (`macos-14`) standalone portable `.app` bundle builds.
 - Added MIT LICENSE, 29/29 unit tests passing.
-- Rebranded to Focusloop Studio with official site `https://focuslooplabs.vercel.app/` and live portable release download.
+- Rebranded to Focusloop Studio with official site `https://focuslooplabs.vercel.app/`.
+- Published v1.0.0 macOS Apple Silicon Portable Release (`FocusloopStudio-macOS-Portable.zip`, 26 MB) alongside Windows Portable Release (`FocusloopLabs-v1.0-Portable.zip`, 192 MB).
+- Updated `studio.html` and `index.html` with dual-download buttons, system specs, and dynamic client-side OS detection.
 
 ## Active Objective
-- Assist user with macOS workflow trigger, verification, and feedback.
+- Assist user with feature feedback, testing, or future releases (e.g. Linux build / installers).
 
