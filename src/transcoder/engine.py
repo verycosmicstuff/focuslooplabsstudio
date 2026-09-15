@@ -139,6 +139,9 @@ class TranscodeJob:
         # Probe duration for progress percentage
         self.total_duration_sec = self._probe_duration()
 
+        return self._execute_ffmpeg(profile, perf, orig_size, orig_mtime)
+
+    def _execute_ffmpeg(self, profile: Dict[str, Any], perf: Dict[str, Any], orig_size: int, orig_mtime: float) -> bool:
         # Build FFmpeg command
         cmd = [
             FFMPEG_PATH,
@@ -254,12 +257,27 @@ class TranscodeJob:
 
             if self.process.returncode != 0:
                 err_msg = "".join(stderr_lines)
+                # If hardware encoder (VideoToolbox or NVENC) failed (e.g. in cloud VM or unsupported GPU),
+                # automatically retry with universal CPU libx265 encoder
+                if profile.get("vcodec") in ("hevc_videotoolbox", "hevc_nvenc") and not getattr(self, "_did_fallback", False):
+                    self._did_fallback = True
+                    self._cleanup_failed()
+                    cpu_profile = TRANSCODE_PROFILES["cpu_x265_hq"]
+                    return self._execute_ffmpeg(cpu_profile, perf, orig_size, orig_mtime)
+
                 self._cleanup_failed()
                 self._update_db_error(f"FFmpeg error: {err_msg[-300:]}")
                 return False
 
             # Verify transcoded output
             if not self._verify_output():
+                # If verification failed with hardware encoder, try CPU fallback
+                if profile.get("vcodec") in ("hevc_videotoolbox", "hevc_nvenc") and not getattr(self, "_did_fallback", False):
+                    self._did_fallback = True
+                    self._cleanup_failed()
+                    cpu_profile = TRANSCODE_PROFILES["cpu_x265_hq"]
+                    return self._execute_ffmpeg(cpu_profile, perf, orig_size, orig_mtime)
+
                 self._cleanup_failed()
                 self._update_db_error("Transcoded file verification failed via ffprobe")
                 return False

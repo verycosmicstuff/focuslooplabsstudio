@@ -385,6 +385,8 @@ class TestProofingAndWatermark(unittest.TestCase):
     def test_18_logs_endpoints(self):
         """Test recent logs retrieval endpoint."""
         from src.api.server import api_get_recent_logs
+        from src.core.logger import logger
+        logger.info("Test log entry for endpoint verification")
         res = api_get_recent_logs(lines=50)
         self.assertIn("path", res)
         self.assertIn("lines", res)

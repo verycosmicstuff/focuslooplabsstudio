@@ -1277,10 +1277,13 @@ def api_get_recent_logs(lines: int = 150):
         with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
             all_lines = f.readlines()
             recent = all_lines[-lines:] if len(all_lines) > lines else all_lines
+        lines_out = [line.rstrip("\r\n") for line in recent]
+        if not lines_out:
+            lines_out = ["Log file initialized. No entries recorded yet."]
         return {
             "path": str(LOG_FILE),
             "size_bytes": size,
-            "lines": [line.rstrip("\r\n") for line in recent]
+            "lines": lines_out
         }
     except Exception as e:
         logger.error(f"Failed to read log file: {e}")
