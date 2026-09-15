@@ -176,6 +176,12 @@ class SourceIndexer:
                 if not self.is_running:
                     break
 
+                # Ignore system fragments, Windows Recycle Bin files ($I..., $R...), and hidden files
+                if fname.startswith("$") or fname.startswith("._") or fname.startswith("~"):
+                    continue
+                if "$recycle.bin" in root.lower() or "system volume information" in root.lower():
+                    continue
+
                 ext = Path(fname).suffix.lower()
                 if ext not in ALL_MEDIA_EXTS:
                     continue

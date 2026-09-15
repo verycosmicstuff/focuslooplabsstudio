@@ -3,10 +3,58 @@ import shutil
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-DB_PATH = DATA_DIR / "savespace.db"
+def _resolve_data_dir() -> Path:
+    custom = os.environ.get("FOCUSLOOP_DATA_DIR") or os.environ.get("SAVESAPCE_DATA_DIR")
+    if custom:
+        p = Path(custom)
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+    
+    # Check if local app directory is writable (preferred for portable zero-install mode)
+    local_data = BASE_DIR / "data"
+    try:
+        local_data.mkdir(parents=True, exist_ok=True)
+        test_file = local_data / ".perm_check"
+        test_file.write_text("ok", encoding="utf-8")
+        test_file.unlink()
+        return local_data
+    except Exception:
+        # Fall back to user AppData if local directory is read-only (e.g. Program Files)
+        appdata = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or str(Path.home())
+        fallback = Path(appdata) / "FocusloopLabs" / "data"
+        if not fallback.exists() and (Path(appdata) / "SaveSpace" / "data").exists():
+            fallback = Path(appdata) / "SaveSpace" / "data"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+def _resolve_logs_dir(data_dir: Path) -> Path:
+    custom = os.environ.get("FOCUSLOOP_LOGS_DIR") or os.environ.get("SAVESAPCE_LOGS_DIR")
+    if custom:
+        p = Path(custom)
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+    if data_dir.parent == BASE_DIR:
+        local_logs = BASE_DIR / "logs"
+        try:
+            local_logs.mkdir(parents=True, exist_ok=True)
+            return local_logs
+        except Exception:
+            pass
+    fallback_logs = data_dir.parent / "logs"
+    fallback_logs.mkdir(parents=True, exist_ok=True)
+    return fallback_logs
+
+DATA_DIR = _resolve_data_dir()
+LOGS_DIR = _resolve_logs_dir(DATA_DIR)
+
+# Database path resolution: use focusloop.db, or use existing savespace.db if present
+if (DATA_DIR / "focusloop.db").exists():
+    DB_PATH = DATA_DIR / "focusloop.db"
+elif (DATA_DIR / "savespace.db").exists():
+    DB_PATH = DATA_DIR / "savespace.db"
+else:
+    DB_PATH = DATA_DIR / "focusloop.db"
 THUMBNAILS_DIR = DATA_DIR / "thumbnails"
 THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -23,21 +71,41 @@ ALL_MEDIA_EXTS = RAW_EXTS | PHOTO_EXTS | VIDEO_EXTS | SIDECAR_EXTS
 
 # Detection of external utilities
 def _resolve_binary(name: str) -> str:
-    choco_direct = Path(r"C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\bin") / f"{name}.exe"
-    if choco_direct.is_file():
-        return str(choco_direct)
+    # 1. Bundled local bin folder inside app (portable / installed distribution)
+    bundled = BASE_DIR / "bin" / f"{name}.exe"
+    if bundled.is_file():
+        return str(bundled)
+    
+    # 2. System PATH
     found = shutil.which(name)
     if found:
         return found
+
+    # 3. Known Chocolatey paths
+    choco_direct = Path(r"C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\bin") / f"{name}.exe"
+    if choco_direct.is_file():
+        return str(choco_direct)
     fallback = Path(rf"C:\ProgramData\chocolatey\bin\{name}.exe")
     if fallback.is_file():
         return str(fallback)
+
+    # 4. Known WinGet paths
+    winget_base = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WinGet" / "Packages"
+    if winget_base.is_dir():
+        try:
+            matches = list(winget_base.glob(f"**/{name}.exe"))
+            if matches:
+                return str(matches[0])
+        except Exception:
+            pass
+
     return ""
 
 FFMPEG_PATH = _resolve_binary("ffmpeg")
 FFPROBE_PATH = _resolve_binary("ffprobe")
 
 HANDBRAKE_PATHS = [
+    str(BASE_DIR / "bin" / "HandBrakeCLI.exe"),
     shutil.which("HandBrakeCLI") or "",
     r"C:\Program Files\HandBrake\HandBrakeCLI.exe",
     r"C:\Program Files\HandBrake\HandBrake.exe",

@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 
-namespace SaveSpaceLauncher
+namespace FocusloopLabsLauncher
 {
     static class Program
     {
@@ -15,20 +15,20 @@ namespace SaveSpaceLauncher
         [STAThread]
         static void Main(string[] args)
         {
-            // Set AppUserModelID so Windows Taskbar groups under SaveSpace Pro
+            // Set AppUserModelID so Windows Taskbar groups under Focusloop Labs
             try
             {
-                SetCurrentProcessExplicitAppUserModelID("verycosmicstuff.savespace.pro");
+                SetCurrentProcessExplicitAppUserModelID("focuslooplabs.studio.pro");
             }
             catch { }
 
             // Single-instance Mutex safeguard
             bool createdNew;
-            using (Mutex mutex = new Mutex(true, "SaveSpace_SingleInstance_Mutex_9876", out createdNew))
+            using (Mutex mutex = new Mutex(true, "FocusloopLabs_SingleInstance_Mutex_9876", out createdNew))
             {
                 if (!createdNew)
                 {
-                    MessageBox.Show("SaveSpace is already running.\nPlease check your taskbar or active windows.", "SaveSpace Pro", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    MessageBox.Show("Focusloop Labs is already running.\nPlease check your taskbar or active windows.", "Focusloop Labs", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
                 }
 
@@ -37,15 +37,27 @@ namespace SaveSpaceLauncher
 
                 if (!File.Exists(mainPy))
                 {
-                    MessageBox.Show("Could not find main.py in:\n" + baseDir, "SaveSpace Launcher Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show("Could not find main.py in:\n" + baseDir, "Focusloop Labs Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
                 }
 
-                // Check Python 3.11 installation candidates
+                // Check Python installation candidates in priority order
+                string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
                 string[] pythonCandidates = new string[]
                 {
-                    @"C:\Users\Sunny\AppData\Local\Programs\Python\Python311\pythonw.exe",
-                    @"C:\Users\Sunny\AppData\Local\Programs\Python\Python311\python.exe",
+                    // 1. Bundled embedded or venv Python inside the application directory (Portable / Installed)
+                    Path.Combine(baseDir, "python", "pythonw.exe"),
+                    Path.Combine(baseDir, "python", "python.exe"),
+                    Path.Combine(baseDir, "python", "Scripts", "pythonw.exe"),
+                    Path.Combine(baseDir, "python", "Scripts", "python.exe"),
+                    Path.Combine(baseDir, "venv", "Scripts", "pythonw.exe"),
+                    Path.Combine(baseDir, "venv", "Scripts", "python.exe"),
+                    // 3. User profile Python installations
+                    Path.Combine(localAppData, "Programs", "Python", "Python311", "pythonw.exe"),
+                    Path.Combine(localAppData, "Programs", "Python", "Python311", "python.exe"),
+                    Path.Combine(localAppData, "Programs", "Python", "Python312", "pythonw.exe"),
+                    Path.Combine(localAppData, "Programs", "Python", "Python312", "python.exe"),
+                    // 4. System PATH candidates
                     "pythonw.exe",
                     "python.exe"
                 };
@@ -74,7 +86,15 @@ namespace SaveSpaceLauncher
 
                 if (string.IsNullOrEmpty(pythonExe))
                 {
-                    MessageBox.Show("Python 3.11 was not found on your system.\nPlease ensure Python 3.11 is installed.", "SaveSpace Launcher Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show(
+                        "Python runtime was not found.\n\n" +
+                        "For a portable installation, ensure the 'python' directory exists inside:\n" +
+                        baseDir + "\n\n" +
+                        "Alternatively, install Python 3.11 (64-bit) from https://www.python.org.",
+                        "Focusloop Labs — Runtime Required",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Error
+                    );
                     return;
                 }
 
@@ -104,7 +124,7 @@ namespace SaveSpaceLauncher
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show("Error launching SaveSpace:\n" + ex.Message, "SaveSpace Launcher Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show("Error launching Focusloop Labs:\n" + ex.Message, "Focusloop Labs Launcher Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
         }

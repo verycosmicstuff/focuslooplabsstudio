@@ -51,6 +51,8 @@ DEFAULT_SESSION_STATE: Dict[str, Any] = {
         "dest_dir": "",
         "action": "copy"
     },
+    "ignored_duplicate_pairs": [],
+    "omitted_duplicate_folders": [],
     "last_task": {
         "task_type": "none",
         "summary": "No previous tasks recorded yet",

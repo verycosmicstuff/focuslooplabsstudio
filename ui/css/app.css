@@ -205,6 +205,7 @@ body {
 .content-area {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 24px 28px;
 }
 
@@ -481,6 +482,24 @@ body {
   margin-top: 4px;
 }
 
+/* Responsive Table Wrapper */
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  margin-bottom: 20px;
+}
+
+.table-responsive .data-table {
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  min-width: 860px;
+}
+
 /* Tables */
 .data-table {
   width: 100%;
@@ -530,6 +549,22 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
+}
+
+.btn-omit {
+  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  font-size: 11px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-omit:hover {
+  background: rgba(239, 68, 68, 0.25);
+  color: #fff;
 }
 
 /* Modal */

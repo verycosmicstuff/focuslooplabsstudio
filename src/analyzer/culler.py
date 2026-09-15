@@ -47,6 +47,7 @@ class CullingEngine:
             FROM files f
             LEFT JOIN media_meta m ON f.id = m.file_id
             WHERE f.media_type IN ('raw', 'photo') AND f.status = 'active'
+              AND f.filename NOT LIKE '$%' AND f.abs_path NOT LIKE '%$recycle.bin%'
         """
         params = []
         if source_id:

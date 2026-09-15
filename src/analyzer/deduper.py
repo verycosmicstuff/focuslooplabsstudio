@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from src.core.db import get_db
@@ -8,7 +9,9 @@ class DuplicateDetector:
     def find_duplicates(
         source_id: Optional[int] = None,
         cross_source_only: bool = False,
-        same_name_only: bool = False
+        same_name_only: bool = False,
+        ignored_pairs: Optional[List[str]] = None,
+        omitted_folders: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """
         Finds duplicate media clusters using fast_hash and verifies with full_hash if matched.
@@ -113,6 +116,12 @@ class DuplicateDetector:
                     unique_folder_paths = sorted(list(dict.fromkeys(m["folder_path"] for m in grp)))
                     unique_folder_names = [Path(fp).name if Path(fp).name else fp for fp in unique_folder_paths]
                     folder_pair_key = " ::: ".join(unique_folder_paths)
+                    # Skip if this folder pair or any of its constituent folders is ignored/omitted
+                    if ignored_pairs and (folder_pair_key in ignored_pairs or any(k in ignored_pairs for k in unique_folder_paths)):
+                        continue
+                    if omitted_folders and any(any(fp.lower() == om.lower() or fp.lower().startswith(om.lower() + os.sep) for om in omitted_folders) for fp in unique_folder_paths):
+                        continue
+
                     if len(unique_folder_names) == 1:
                         folder_pair_label = f"{unique_folder_names[0]} (Internal Folder Copies)"
                     else:

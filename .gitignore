@@ -36,3 +36,9 @@ $RECYCLE.BIN/
 logs/
 scratch/
 master_dashboard.*
+
+# Build & Distribution outputs (large installer/zip binaries hosted on GitHub Releases)
+dist/
+build/
+*.exe
+

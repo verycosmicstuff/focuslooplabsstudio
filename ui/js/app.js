@@ -529,15 +529,45 @@ document.getElementById('chk-burst-only').addEventListener('change', () => {
   loadCuller();
 });
 
+const selCullFolder = document.getElementById('sel-cull-folder');
+if (selCullFolder) {
+  selCullFolder.addEventListener('change', () => {
+    loadCuller();
+  });
+}
+
+async function loadCullerFolders() {
+  const sel = document.getElementById('sel-cull-folder');
+  if (!sel) return;
+  const currentVal = sel.value;
+  try {
+    const res = await fetch(API_BASE + '/api/culling/folders');
+    const folders = await res.json();
+    sel.innerHTML = '<option value="">All Scanned Folders</option>';
+    folders.forEach(f => {
+      const opt = document.createElement('option');
+      opt.value = f.path;
+      opt.textContent = f.name;
+      opt.title = f.path;
+      sel.appendChild(opt);
+    });
+    if (currentVal) sel.value = currentVal;
+  } catch (e) {
+    console.error('Failed to load culling folders', e);
+  }
+}
+
 let cullOffset = 0;
 const CULL_BATCH_SIZE = 80;
 
 async function loadCuller(append = false) {
   const threshold = sliderThreshold.value;
   const burstOnly = document.getElementById('chk-burst-only').checked;
+  const folderFilter = document.getElementById('sel-cull-folder')?.value || '';
   const gallery = document.getElementById('culler-gallery');
 
   if (!append) {
+    loadCullerFolders();
     cullOffset = 0;
     cullingItems = [];
     selectedCullIds.clear();
@@ -548,7 +578,11 @@ async function loadCuller(append = false) {
   if (existingMore) existingMore.remove();
 
   try {
-    const res = await fetch(API_BASE + '/api/culling?threshold=' + threshold + '&burst_only=' + burstOnly + '&limit=' + CULL_BATCH_SIZE + '&offset=' + cullOffset);
+    let url = API_BASE + '/api/culling?threshold=' + threshold + '&burst_only=' + burstOnly + '&limit=' + CULL_BATCH_SIZE + '&offset=' + cullOffset;
+    if (folderFilter) {
+      url += '&folder=' + encodeURIComponent(folderFilter);
+    }
+    const res = await fetch(url);
     const newItems = await res.json();
 
     if (!append) {
@@ -583,11 +617,34 @@ async function loadCuller(append = false) {
         + '<img class="media-thumb" src="' + API_BASE + '/api/thumbnail/' + item.id + '" loading="lazy" decoding="async" width="200" height="150" onerror="this.style.opacity=0.3">'
         + '<div class="blur-badge ' + blurBadgeClass + '">' + blurBadgeText + '</div>'
         + burstBadgeHtml
+        + '<button class="btn-cull-card-keep" title="Mark as intentional / keep" style="position:absolute; top:6px; right:6px; z-index:5; background:rgba(15,23,42,0.85); border:1px solid rgba(255,255,255,0.25); color:#fbbf24; border-radius:4px; font-size:10px; font-weight:700; padding:2px 7px; cursor:pointer;">⭐ Keep</button>'
         + '</div>'
         + '<div class="media-meta-bar">'
         + '<div class="media-name" title="' + item.filename + '">' + item.filename + '</div>'
         + '<div class="media-details"><span>' + (item.camera_model || item.media_type.toUpperCase()) + '</span><span>' + formatBytes(item.size_bytes) + '</span></div>'
         + '</div>';
+
+      const keepBtn = card.querySelector('.btn-cull-card-keep');
+      if (keepBtn) {
+        keepBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          try {
+            await fetch(API_BASE + '/api/culling/action', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ file_ids: [item.id], action: 'keep', include_sidecars: false })
+            });
+            showToast(`Marked "${item.filename}" as intentional keep!`, 'success');
+            card.style.opacity = '0';
+            card.style.transform = 'scale(0.9)';
+            card.style.transition = 'all 0.2s ease';
+            setTimeout(() => card.remove(), 200);
+            cullingItems = cullingItems.filter(i => i.id !== item.id);
+          } catch (err) {
+            showToast('Failed to keep photo: ' + err, 'error');
+          }
+        });
+      }
 
       card.addEventListener('click', () => {
         if (selectedCullIds.has(item.id)) {
@@ -602,7 +659,7 @@ async function loadCuller(append = false) {
       card.addEventListener('dblclick', () => {
         const curIdx = cullingItems.findIndex(ci => ci.id === item.id);
         if (curIdx >= 0) {
-          openUniversalPreviewModal({ items: cullingItems, currentIndex: curIdx });
+          openUniversalPreviewModal({ items: cullingItems, currentIndex: curIdx, fromCuller: true });
         }
       });
 
@@ -836,6 +893,7 @@ function renderDuplicates() {
         batchButtonsHtml += `<button class="btn btn-secondary btn-xs btn-group-pick-folder" data-folder="${escapeHtml(fg.folderPaths[0])}" style="font-size:11px; padding:3px 8px;" title="Select all duplicates in ${escapeHtml(name0)}">Check all in "${escapeHtml(name0)}"</button>`;
       }
       batchButtonsHtml += `<button class="btn btn-secondary btn-xs btn-group-uncheck-all" style="font-size:11px; padding:3px 8px;">Deselect Folder</button>`;
+      batchButtonsHtml += `<button class="btn btn-secondary btn-xs btn-group-omit-pair" data-pair-key="${escapeHtml(fg.key)}" style="font-size:11px; padding:3px 8px; color:var(--accent-rose);" title="Omit this folder pair from duplicates (e.g. intentional picks or mirrors)">🚫 Omit this Pair</button>`;
 
       const headerDiv = document.createElement('div');
       headerDiv.style.display = 'flex';
@@ -900,6 +958,27 @@ function renderDuplicates() {
         });
       });
 
+      groupWrapper.querySelectorAll('.btn-group-omit-pair').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const pairKey = btn.dataset.pairKey;
+          if (!pairKey) return;
+          try {
+            const res = await fetch(API_BASE + '/api/duplicates/omit_pair', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ pair_key: pairKey })
+            });
+            if (res.ok) {
+              showToast('Folder pair omitted from duplicates view.', 'info');
+              await updateIgnoredDupesBadge();
+              await loadDuplicates();
+            }
+          } catch (e) {
+            showToast('Failed to omit pair: ' + e, 'error');
+          }
+        });
+      });
+
       container.appendChild(groupWrapper);
     });
   } else {
@@ -916,6 +995,8 @@ async function loadDuplicates() {
   const sameNameOnly = document.getElementById('chk-same-filename') ? document.getElementById('chk-same-filename').checked : true;
   const container = document.getElementById('duplicates-container');
   container.innerHTML = '<p style="color:var(--text-muted); padding:20px; text-align:center;">Scanning duplicate clusters...</p>';
+
+  updateIgnoredDupesBadge();
 
   try {
     const res = await fetch(API_BASE + '/api/duplicates?cross_source_only=' + crossOnly + '&same_name_only=' + sameNameOnly);
@@ -976,6 +1057,83 @@ if (btnDupeSelectNone) {
     });
     showToast('Cleared all duplicate selections.', 'info');
   });
+}
+
+async function updateIgnoredDupesBadge() {
+  try {
+    const res = await fetch(API_BASE + '/api/duplicates/ignored');
+    if (res.ok) {
+      const data = await res.json();
+      const countEl = document.getElementById('lbl-ignored-dupe-count');
+      if (countEl) countEl.innerText = (data.ignored_pairs || []).length;
+    }
+  } catch (e) {}
+}
+
+async function openIgnoredDupesModal() {
+  const modal = document.getElementById('modal-ignored-dupes');
+  const listEl = document.getElementById('ignored-dupes-list');
+  if (!modal || !listEl) return;
+
+  listEl.innerHTML = '<p style="color:var(--text-muted); font-size:12px;">Loading omitted pairs...</p>';
+  modal.classList.add('active');
+
+  try {
+    const res = await fetch(API_BASE + '/api/duplicates/ignored');
+    const data = await res.json();
+    const pairs = data.ignored_pairs || [];
+    if (pairs.length === 0) {
+      listEl.innerHTML = '<p style="color:var(--text-muted); font-size:12px; padding:12px 0;">No folder pairs are currently omitted.</p>';
+      return;
+    }
+
+    listEl.innerHTML = '';
+    pairs.forEach(pairKey => {
+      const row = document.createElement('div');
+      row.style.display = 'flex';
+      row.style.justifyContent = 'space-between';
+      row.style.alignItems = 'center';
+      row.style.background = 'rgba(255, 255, 255, 0.04)';
+      row.style.padding = '8px 12px';
+      row.style.borderRadius = '6px';
+      row.style.gap = '12px';
+
+      const label = pairKey.replace(/ ::: /g, '  ⟷  ');
+      row.innerHTML = `
+        <span style="font-family:monospace; font-size:12px; color:var(--text-main); word-break:break-all;">${escapeHtml(label)}</span>
+        <button class="btn btn-secondary btn-xs btn-restore-ignored-pair" data-pair-key="${escapeHtml(pairKey)}" style="font-size:11px; white-space:nowrap;">Restore</button>
+      `;
+      listEl.appendChild(row);
+    });
+
+    listEl.querySelectorAll('.btn-restore-ignored-pair').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const pk = btn.dataset.pairKey;
+        try {
+          const r = await fetch(API_BASE + '/api/duplicates/restore_pair', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pair_key: pk })
+          });
+          if (r.ok) {
+            showToast('Restored folder pair to duplicates.', 'success');
+            await updateIgnoredDupesBadge();
+            openIgnoredDupesModal();
+            loadDuplicates();
+          }
+        } catch (e) {
+          showToast('Failed to restore pair: ' + e, 'error');
+        }
+      });
+    });
+  } catch (err) {
+    listEl.innerHTML = '<p style="color:var(--accent-rose); font-size:12px;">Failed to load omitted pairs.</p>';
+  }
+}
+
+const btnManageIgnoredDupes = document.getElementById('btn-manage-ignored-dupes');
+if (btnManageIgnoredDupes) {
+  btnManageIgnoredDupes.addEventListener('click', openIgnoredDupesModal);
 }
 
 document.getElementById('btn-delete-selected-dupes').addEventListener('click', async () => {
@@ -3904,15 +4062,17 @@ document.querySelectorAll('input[name="rad-selects-action"]').forEach(rad => {
 // ----------------- UNIVERSAL PHOTO PREVIEW LIGHTBOX MODAL -----------------
 let previewModalState = {
   items: [],
-  currentIndex: 0
+  currentIndex: 0,
+  fromCuller: false
 };
 
-window.openUniversalPreviewModal = function({ items, currentIndex = 0 }) {
+window.openUniversalPreviewModal = function({ items, currentIndex = 0, fromCuller = false }) {
   const modal = document.getElementById('modal-photo-preview');
   if (!modal || !items || items.length === 0) return;
 
   previewModalState.items = items;
   previewModalState.currentIndex = Math.max(0, Math.min(currentIndex, items.length - 1));
+  previewModalState.fromCuller = !!fromCuller;
 
   renderPreviewModalCurrentItem();
   modal.classList.add('active');
@@ -3935,6 +4095,7 @@ function renderPreviewModalCurrentItem() {
   const loaderEl = document.getElementById('preview-modal-loader');
   const prevBtn = document.getElementById('btn-preview-modal-prev');
   const nextBtn = document.getElementById('btn-preview-modal-next');
+  const keepBtn = document.getElementById('btn-preview-modal-keep');
 
   if (counterEl) counterEl.innerText = `${currentIndex + 1} / ${items.length}`;
   if (titleEl) {
@@ -3945,6 +4106,10 @@ function renderPreviewModalCurrentItem() {
   if (pathEl) {
     pathEl.innerText = absPath;
     pathEl.title = absPath;
+  }
+
+  if (keepBtn) {
+    keepBtn.style.display = previewModalState.fromCuller ? 'inline-block' : 'none';
   }
 
   if (prevBtn) prevBtn.style.opacity = items.length > 1 ? '1' : '0.3';
@@ -3975,6 +4140,36 @@ function renderPreviewModalCurrentItem() {
 const btnPrevModalPrev = document.getElementById('btn-preview-modal-prev');
 const btnPrevModalNext = document.getElementById('btn-preview-modal-next');
 const btnPrevModalReveal = document.getElementById('btn-preview-modal-reveal');
+const btnPrevModalKeep = document.getElementById('btn-preview-modal-keep');
+
+if (btnPrevModalKeep) {
+  btnPrevModalKeep.addEventListener('click', async () => {
+    const item = previewModalState.items[previewModalState.currentIndex];
+    if (!item || !item.id) return;
+    try {
+      const res = await fetch(API_BASE + '/api/culling/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file_ids: [item.id], action: 'keep', include_sidecars: false })
+      });
+      if (res.ok) {
+        showToast(`Marked "${item.filename}" as intentional keep!`, 'success');
+        previewModalState.items.splice(previewModalState.currentIndex, 1);
+        if (previewModalState.items.length === 0) {
+          document.getElementById('modal-photo-preview')?.classList.remove('active');
+        } else {
+          if (previewModalState.currentIndex >= previewModalState.items.length) {
+            previewModalState.currentIndex = previewModalState.items.length - 1;
+          }
+          renderPreviewModalCurrentItem();
+        }
+        loadCuller();
+      }
+    } catch (err) {
+      showToast('Failed to mark photo keep: ' + err, 'error');
+    }
+  });
+}
 
 if (btnPrevModalPrev) {
   btnPrevModalPrev.addEventListener('click', () => {

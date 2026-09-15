@@ -398,7 +398,7 @@ def get_stats():
 # ----------------- CULLING & BLUR -----------------
 
 @app.get("/api/culling")
-def get_culling_items(threshold: float = 25.0, source_id: Optional[int] = None, burst_only: bool = False, limit: int = 80, offset: int = 0):
+def get_culling_items(threshold: float = 25.0, source_id: Optional[int] = None, folder: Optional[str] = None, burst_only: bool = False, limit: int = 100, offset: int = 0):
     conn = get_db()
     cursor = conn.cursor()
 
@@ -411,11 +411,17 @@ def get_culling_items(threshold: float = 25.0, source_id: Optional[int] = None, 
         LEFT JOIN media_meta m ON f.id = m.file_id
         JOIN sources s ON f.source_id = s.id
         WHERE f.status = 'active'
+          AND (c.disposition IS NULL OR c.disposition NOT IN ('keep', 'keep_intentional', 'ignored'))
+          AND f.filename NOT LIKE '$%' AND f.abs_path NOT LIKE '%$recycle.bin%'
     """
     params = []
     if source_id:
         query += " AND f.source_id = ?"
         params.append(source_id)
+    if folder:
+        folder_clean = folder.replace('/', '\\')
+        query += " AND (f.abs_path LIKE ? OR f.rel_path LIKE ?)"
+        params.extend([f"%{folder_clean}%", f"%{folder_clean}%"])
     if burst_only:
         query += " AND c.burst_group IS NOT NULL"
 
@@ -426,6 +432,33 @@ def get_culling_items(threshold: float = 25.0, source_id: Optional[int] = None, 
     items = [dict(r) for r in cursor.fetchall()]
     return items
 
+@app.get("/api/culling/folders")
+def get_culling_folders():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT DISTINCT f.abs_path
+        FROM files f
+        JOIN culling c ON f.id = c.file_id
+        WHERE f.status = 'active'
+          AND (c.disposition IS NULL OR c.disposition NOT IN ('keep', 'keep_intentional', 'ignored'))
+          AND f.filename NOT LIKE '$%' AND f.abs_path NOT LIKE '%$recycle.bin%'
+    """)
+    rows = cursor.fetchall()
+    folder_set = set()
+    for r in rows:
+        try:
+            p = Path(r["abs_path"])
+            folder_set.add(str(p.parent))
+        except Exception:
+            pass
+    
+    folders = []
+    for fp in sorted(folder_set):
+        name = Path(fp).name if Path(fp).name else fp
+        folders.append({"path": fp, "name": name})
+    return folders
+
 @app.post("/api/culling/action")
 def execute_culling(data: CullingAction):
     res = CullingEngine.execute_culling_action(data.file_ids, data.action, data.include_sidecars)
@@ -435,7 +468,45 @@ def execute_culling(data: CullingAction):
 
 @app.get("/api/duplicates")
 def get_duplicates(source_id: Optional[int] = None, cross_source_only: bool = False, same_name_only: bool = True):
-    return DuplicateDetector.find_duplicates(source_id, cross_source_only, same_name_only)
+    session = get_session_state()
+    ignored_pairs = session.get("ignored_duplicate_pairs", [])
+    omitted_folders = session.get("omitted_duplicate_folders", [])
+    return DuplicateDetector.find_duplicates(
+        source_id=source_id,
+        cross_source_only=cross_source_only,
+        same_name_only=same_name_only,
+        ignored_pairs=ignored_pairs,
+        omitted_folders=omitted_folders
+    )
+
+@app.post("/api/duplicates/omit_pair")
+def api_omit_duplicate_pair(data: Dict[str, str]):
+    pair_key = data.get("pair_key")
+    if not pair_key:
+        raise HTTPException(status_code=400, detail="Missing pair_key")
+    session = get_session_state()
+    ignored = session.get("ignored_duplicate_pairs", [])
+    if pair_key not in ignored:
+        ignored.append(pair_key)
+        session["ignored_duplicate_pairs"] = ignored
+        save_session_state(session)
+    return {"status": "ok", "ignored_pairs": ignored}
+
+@app.post("/api/duplicates/restore_pair")
+def api_restore_duplicate_pair(data: Dict[str, str]):
+    pair_key = data.get("pair_key")
+    session = get_session_state()
+    ignored = session.get("ignored_duplicate_pairs", [])
+    if pair_key in ignored:
+        ignored.remove(pair_key)
+        session["ignored_duplicate_pairs"] = ignored
+        save_session_state(session)
+    return {"status": "ok", "ignored_pairs": ignored}
+
+@app.get("/api/duplicates/ignored")
+def api_get_ignored_pairs():
+    session = get_session_state()
+    return {"ignored_pairs": session.get("ignored_duplicate_pairs", [])}
 
 @app.post("/api/duplicates/resolve")
 def resolve_duplicates(file_ids: List[int], action: str = "trash"):

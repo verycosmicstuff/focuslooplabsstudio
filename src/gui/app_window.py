@@ -13,7 +13,7 @@ def run_app():
     # Set Windows AppUserModelID for taskbar icon grouping
     try:
         import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("verycosmicstuff.savespace.pro")
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("focuslooplabs.studio.pro")
     except Exception:
         pass
 
@@ -27,7 +27,7 @@ def run_app():
     # Launch PyWebView native Windows desktop window
     url = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
     window = webview.create_window(
-        title="SaveSpace — Ultimate Storage Manager & Transcoder",
+        title="Focusloop Labs — Studio Assistant & Media Manager",
         url=url,
         width=1400,
         height=900,

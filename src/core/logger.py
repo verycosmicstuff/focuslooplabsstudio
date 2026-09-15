@@ -5,14 +5,14 @@ import traceback
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from src.config import BASE_DIR
+from src.config import BASE_DIR, LOGS_DIR
 
-LOGS_DIR = BASE_DIR / "logs"
-LOGS_DIR.mkdir(parents=True, exist_ok=True)
-LOG_FILE = LOGS_DIR / "savespace.log"
+LOG_FILE = LOGS_DIR / "focusloop.log"
+if not LOG_FILE.exists() and (LOGS_DIR / "savespace.log").exists():
+    LOG_FILE = LOGS_DIR / "savespace.log"
 
-# Create root / savespace logger
-logger = logging.getLogger("savespace")
+# Create root / focusloop logger
+logger = logging.getLogger("focusloop")
 logger.setLevel(logging.INFO)
 
 # Avoid duplicate handlers on reload

@@ -542,6 +542,60 @@ class TestProofingAndWatermark(unittest.TestCase):
         self.assertGreaterEqual(src_photos["total"], 1)
         self.assertEqual(src_photos["photos"][0]["filename"], "DSCF1001.JPG")
 
+    def test_22_duplicate_omission_and_culling_filters(self):
+        """Test duplicate pair omission/restoration and culling filters."""
+        from src.api.server import api_omit_duplicate_pair, api_restore_duplicate_pair, api_get_ignored_pairs, execute_culling, CullingAction
+        from src.core.session import get_session_state, save_session_state
+        from src.analyzer.deduper import DuplicateDetector
+        from src.core.db import get_db
+
+        # 1. Test omit duplicate pair API
+        test_pair_key = "F:\\Photos\\ShootA ::: F:\\Photos\\ShootB"
+        res_omit = api_omit_duplicate_pair({"pair_key": test_pair_key})
+        self.assertEqual(res_omit["status"], "ok")
+        self.assertIn(test_pair_key, res_omit["ignored_pairs"])
+
+        # Verify through get_ignored_pairs
+        res_ignored = api_get_ignored_pairs()
+        self.assertIn(test_pair_key, res_ignored["ignored_pairs"])
+
+        # Verify restore duplicate pair API
+        res_restore = api_restore_duplicate_pair({"pair_key": test_pair_key})
+        self.assertEqual(res_restore["status"], "ok")
+        self.assertNotIn(test_pair_key, res_restore["ignored_pairs"])
+
+        # 2. Test culling 'keep' action
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM sources LIMIT 1")
+        row = cursor.fetchone()
+        src_id = row[0] if row else 1
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO files (id, source_id, rel_path, abs_path, filename, ext, size_bytes, mtime, ctime, media_type, status)
+            VALUES (99999, ?, 'keep_me.jpg', ?, 'keep_me.jpg', '.jpg', 5000, 100, 100, 'photo', 'active')
+        """, (src_id, str(self.sample_photo)))
+        cursor.execute("""
+            INSERT OR REPLACE INTO culling (file_id, blur_score)
+            VALUES (99999, 15.0)
+        """)
+        conn.commit()
+
+        cull_action_req = CullingAction(file_ids=[99999], action="keep", include_sidecars=False)
+        action_res = execute_culling(cull_action_req)
+        self.assertEqual(action_res["action"], "keep")
+        self.assertEqual(action_res["processed_count"], 1)
+
+        cursor.execute("SELECT disposition FROM culling WHERE file_id = 99999")
+        disp = cursor.fetchone()[0]
+        self.assertEqual(disp, "keep")
+
+        # Cleanup
+        cursor.execute("DELETE FROM culling WHERE file_id = 99999")
+        cursor.execute("DELETE FROM files WHERE id = 99999")
+        conn.commit()
+
 if __name__ == "__main__":
     unittest.main()
+
 

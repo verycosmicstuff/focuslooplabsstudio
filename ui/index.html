@@ -3,17 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SaveSpace — Media Storage & Transcoder</title>
+  <title>Focusloop Labs — Studio Assistant & Media Manager</title>
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
   <!-- Sidebar -->
   <aside class="sidebar">
     <div class="brand">
-      <div class="brand-icon">S</div>
+      <div class="brand-icon">F</div>
       <div>
-        <div class="brand-title">SaveSpace</div>
-        <div class="brand-badge">PRO DESKTOP</div>
+        <div class="brand-title">Focusloop</div>
+        <div class="brand-badge">LABS STUDIO</div>
       </div>
     </div>
 
@@ -52,20 +52,20 @@
       </div>
     </nav>
 
-    <!-- Throttling & Priority Box -->
+    <!-- Processing Speed Box -->
     <div class="sidebar-footer">
       <div class="perf-mode-card">
         <div class="perf-header">
-          <span>GPU/CPU Throttling</span>
-          <span id="cur-perf-badge" style="color:var(--accent-cyan)">BALANCED</span>
+          <span>Processing Speed</span>
+          <span id="cur-perf-badge" style="color:var(--accent-cyan); font-weight:700;">BALANCED</span>
         </div>
         <div class="perf-selector">
-          <button class="perf-btn" data-mode="stealth" title="Lowest OS priority (Idle), 2 threads, laptop stays cold">Eco</button>
-          <button class="perf-btn active" data-mode="balanced" title="Below-normal priority with NVENC GPU">Normal</button>
-          <button class="perf-btn" data-mode="turbo" title="Full speed overnight mode">Turbo</button>
+          <button class="perf-btn" data-mode="stealth" title="Lowest OS priority (Idle), 2 threads, completely silent">Quiet</button>
+          <button class="perf-btn active" data-mode="balanced" title="Smooth multitasking with GPU acceleration">Balanced</button>
+          <button class="perf-btn" data-mode="turbo" title="Full speed processing">Fast</button>
         </div>
         <div style="margin-top: 8px; display:flex; gap:6px;">
-          <button id="btn-transcode-pause" class="btn btn-secondary btn-sm" style="flex:1;">Pause Transcodes</button>
+          <button id="btn-transcode-pause" class="btn btn-secondary btn-sm" style="flex:1;">Pause Tasks</button>
         </div>
       </div>
     </div>
@@ -135,40 +135,47 @@
             <button id="btn-scan-all" class="btn btn-primary">Scan All Drives</button>
           </div>
         </div>
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Label</th>
-              <th>Drive Path</th>
-              <th>Type</th>
-              <th>Status</th>
-              <th>Indexed Files</th>
-              <th>Media Size</th>
-              <th>Last Scanned</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="sources-table-body">
-            <!-- Dynamic rows -->
-          </tbody>
-        </table>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Label</th>
+                <th>Drive Path</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Indexed Files</th>
+                <th>Media Size</th>
+                <th>Last Scanned</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="sources-table-body">
+              <!-- Dynamic rows -->
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <!-- 3. BLUR & BURST CULLER TAB -->
       <section id="tab-culler" class="tab-panel">
-        <div class="toolbar">
-          <div class="toolbar-group">
-            <label style="font-size: 13px; color:var(--text-muted)">Sharpness Threshold:</label>
-            <input type="range" id="blur-threshold-slider" min="5" max="50" value="25" style="width: 120px;">
+        <div class="toolbar" style="flex-wrap: wrap; gap: 10px;">
+          <div class="toolbar-group" style="flex-wrap: wrap; gap: 10px;">
+            <label style="font-size: 13px; color:var(--text-muted)">Folder / Shoot:</label>
+            <select id="sel-cull-folder" style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:5px 10px; border-radius:6px; font-size:12px; max-width:260px;">
+              <option value="">All Scanned Folders</option>
+            </select>
+
+            <label style="font-size: 13px; color:var(--text-muted); margin-left:6px;">Sharpness Threshold:</label>
+            <input type="range" id="blur-threshold-slider" min="5" max="50" value="25" style="width: 110px;">
             <span id="blur-threshold-val" style="font-weight:700; font-size:13px;">25</span>
           </div>
-          <div class="toolbar-group">
+          <div class="toolbar-group" style="flex-wrap: wrap; gap: 8px;">
             <label style="font-size: 13px; color:var(--text-muted); display:flex; align-items:center; gap:6px;">
               <input type="checkbox" id="chk-burst-only"> Bursts Only
             </label>
             <button id="btn-select-all-blurry" class="btn btn-secondary btn-sm">Select All Blurry</button>
             <button id="btn-cull-quarantine" class="btn btn-secondary btn-sm">Quarantine Selected</button>
-            <button id="btn-cull-trash" class="btn btn-danger btn-sm">Send to Recycle Bin</button>
+            <button id="btn-cull-trash" class="btn btn-danger btn-sm">Recycle Selected</button>
           </div>
         </div>
 
@@ -197,6 +204,7 @@
           </div>
           <div class="toolbar-group" style="gap: 8px; flex-wrap: wrap;">
             <input type="text" id="txt-dupe-filter" placeholder="Filter folder or file..." style="background: var(--bg-card); color: #fff; border: 1px solid var(--border-color); padding: 4px 10px; border-radius: 6px; font-size: 12px; width: 170px;">
+            <button id="btn-manage-ignored-dupes" class="btn btn-secondary btn-sm" title="View & restore omitted folder pairs">🚫 Omitted Pairs (<span id="lbl-ignored-dupe-count">0</span>)</button>
             <button id="btn-auto-select-redundant" class="btn btn-secondary btn-sm" title="Auto-select all redundant exact copies">Auto-Select Exact Copies</button>
             <button id="btn-dupe-select-none" class="btn btn-secondary btn-sm" title="Deselect all checked duplicates">Select None</button>
             <button id="btn-delete-selected-dupes" class="btn btn-danger btn-sm">Recycle Selected Duplicates</button>
@@ -211,18 +219,18 @@
       <!-- 5. TRANSCODER TAB -->
       <section id="tab-transcoder" class="tab-panel">
         <!-- Hardware & Profile Bar -->
-        <div class="toolbar">
+        <div class="toolbar" style="flex-wrap:wrap; gap:12px;">
           <div class="toolbar-group">
-            <span style="font-size: 13px; font-weight: 600;">Hardware Engine:</span>
-            <span class="brand-badge" style="background:rgba(16,185,129,0.2); color:var(--accent-emerald)">NVIDIA RTX 3060 NVENC Active</span>
+            <span style="font-size: 13px; font-weight: 600;">Acceleration:</span>
+            <span class="brand-badge" style="background:rgba(16,185,129,0.2); color:var(--accent-emerald); font-weight:700;">⚡ GPU Hardware Acceleration Active</span>
           </div>
-          <div class="toolbar-group">
-            <label style="font-size:12px; color:var(--text-muted);">Conversion Profile:</label>
+          <div class="toolbar-group" style="flex-wrap:wrap;">
+            <label style="font-size:12px; color:var(--text-muted);">Preset:</label>
             <select id="sel-transcode-profile" style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:6px 10px; border-radius:6px; font-size:13px;">
-              <option value="nvenc_hq_10bit">NVENC High Quality 10-Bit (Recommended for Fuji)</option>
-              <option value="nvenc_lossless">NVENC Ultra Master (CQ 18)</option>
-              <option value="nvenc_compact">NVENC Max Space Saving (CQ 26)</option>
-              <option value="cpu_x265_hq">CPU libx265 (High Efficiency)</option>
+              <option value="nvenc_hq_10bit">High Quality 10-Bit (Recommended for Camera RAW/ProRes)</option>
+              <option value="nvenc_lossless">Pristine Master Quality (CQ 18)</option>
+              <option value="nvenc_compact">Compact Space-Saver (CQ 26)</option>
+              <option value="cpu_x265_hq">CPU Software Encoder (libx265)</option>
             </select>
           </div>
         </div>
@@ -296,12 +304,12 @@
         </div>
 
         <!-- Filter & Selection Toolbar for Candidates -->
-        <div class="toolbar" style="margin-bottom:12px;">
-          <div class="toolbar-group">
-            <label style="font-size:12px; color:var(--text-muted);">Source / Folder:</label>
-            <select id="sel-transcode-drive" style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:5px 8px; border-radius:6px; font-size:12px;"></select>
+        <div class="toolbar" style="margin-bottom:12px; flex-wrap:wrap; gap:10px;">
+          <div class="toolbar-group" style="flex-wrap:wrap; gap:8px;">
+            <label style="font-size:12px; color:var(--text-muted);">Folder:</label>
+            <select id="sel-transcode-drive" style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:5px 8px; border-radius:6px; font-size:12px; max-width:180px;"></select>
 
-            <label style="font-size:12px; color:var(--text-muted); margin-left:6px;">Min Size:</label>
+            <label style="font-size:12px; color:var(--text-muted); margin-left:4px;">Min Size:</label>
             <select id="sel-transcode-min-size" style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:5px 8px; border-radius:6px; font-size:12px;">
               <option value="50">> 50 MB</option>
               <option value="100">> 100 MB</option>
@@ -310,7 +318,7 @@
               <option value="5000">> 5 GB</option>
             </select>
 
-            <label style="font-size:12px; color:var(--text-muted); margin-left:6px;">Codec:</label>
+            <label style="font-size:12px; color:var(--text-muted); margin-left:4px;">Codec:</label>
             <select id="sel-transcode-codec" style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:5px 8px; border-radius:6px; font-size:12px;">
               <option value="">All Codecs</option>
               <option value="h264">H.264 / AVC</option>
@@ -318,42 +326,44 @@
               <option value="hevc">H.265 / HEVC</option>
             </select>
 
-            <label style="font-size:12px; color:var(--text-muted); margin-left:6px;">Analysis:</label>
+            <label style="font-size:12px; color:var(--text-muted); margin-left:4px;">Filter:</label>
             <select id="sel-transcode-suitability" style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:5px 8px; border-radius:6px; font-size:12px;">
-              <option value="recommended">Safe to Compress (Recommended)</option>
-              <option value="">All Videos (Show Everything)</option>
-              <option value="high_savings">High Savings Only (Camera Raw/4K)</option>
-              <option value="already_compact">Already Compact (Bloat Risk)</option>
+              <option value="recommended">Recommended Space Savers</option>
+              <option value="">All Videos</option>
+              <option value="high_savings">High Bitrate / 4K Footage</option>
+              <option value="already_compact">Already Compact</option>
               <option value="already_hevc">Already H.265 / HEVC</option>
             </select>
 
-            <input type="text" id="txt-transcode-search" placeholder="Search filename or folder..." style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:5px 8px; border-radius:6px; font-size:12px; width:170px;">
+            <input type="text" id="txt-transcode-search" placeholder="Search filename or folder..." style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:5px 8px; border-radius:6px; font-size:12px; min-width:140px; flex:1;">
           </div>
-          <div class="toolbar-group">
+          <div class="toolbar-group" style="flex-wrap:wrap; gap:8px;">
             <span id="transcode-selection-summary" style="font-size:12px; font-weight:600; color:var(--accent-cyan); margin-right:6px;">0 selected</span>
             <button id="btn-queue-selected" class="btn btn-primary btn-sm">Queue Selected (0)</button>
             <button id="btn-queue-all-filtered" class="btn btn-secondary btn-sm">Queue All Filtered</button>
           </div>
         </div>
 
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th style="width:36px; text-align:center;"><input type="checkbox" id="chk-candidate-all"></th>
-              <th>Filename</th>
-              <th>Folder</th>
-              <th>Bitrate</th>
-              <th>Codec / Res</th>
-              <th>Original Size</th>
-              <th>Est. Savings</th>
-              <th>Efficiency / Advice</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody id="video-candidates-body">
-            <!-- Video candidates -->
-          </tbody>
-        </table>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width:36px; text-align:center;"><input type="checkbox" id="chk-candidate-all"></th>
+                <th>Video File</th>
+                <th>Folder</th>
+                <th>Bitrate</th>
+                <th>Format / Res</th>
+                <th>Original Size</th>
+                <th>Est. Space Saved</th>
+                <th>Recommendation</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="video-candidates-body">
+              <!-- Video candidates -->
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <!-- 6. SSD & NAS SYNC TAB -->
@@ -1030,6 +1040,27 @@
     </div>
   </div>
 
+  <!-- Ignored Duplicate Pairs Modal -->
+  <div id="modal-ignored-dupes" class="modal-overlay">
+    <div class="modal-dialog" style="max-width: 680px;">
+      <div class="modal-header">
+        <h3 style="font-size: 15px;">🚫 Omitted / Ignored Duplicate Pairs</h3>
+        <button class="btn btn-secondary btn-sm modal-close">&times;</button>
+      </div>
+      <div class="modal-body" style="display: flex; flex-direction: column; gap: 12px;">
+        <p style="font-size: 12px; color: var(--text-muted); margin: 0;">
+          These folder pairs have been omitted from the duplicates view (e.g. intentional editorial picks, client selects, or mirror folders). Click <b>Restore</b> on any pair to display it in Duplicates Finder again.
+        </p>
+        <div id="ignored-dupes-list" style="display:flex; flex-direction:column; gap:8px; max-height:340px; overflow-y:auto;">
+          <!-- Rendered dynamically -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary modal-close">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Universal Photo Preview Lightbox Modal -->
   <div id="modal-photo-preview" class="modal-overlay" style="z-index: 9999; backdrop-filter: blur(10px); background: rgba(3, 7, 18, 0.94);">
     <div style="position: relative; width: 94vw; height: 92vh; max-width: 1400px; display: flex; flex-direction: column; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8);">
@@ -1042,6 +1073,7 @@
           <span id="preview-modal-size" style="font-size: 12px; color: var(--text-muted);"></span>
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
+          <button id="btn-preview-modal-keep" class="btn btn-secondary btn-sm" title="Mark as Intentional (Keep in collection & remove from Blurry list)" style="padding: 4px 10px; font-size: 12px; display:none;">⭐ Keep (Intentional)</button>
           <button id="btn-preview-modal-reveal" class="btn btn-secondary btn-sm" title="Reveal in File Explorer" style="padding: 4px 10px; font-size: 12px;">📂 Reveal in Explorer</button>
           <button id="btn-preview-modal-close" class="btn btn-secondary btn-sm modal-close" style="font-size: 18px; padding: 2px 10px; line-height: 1;">&times;</button>
         </div>

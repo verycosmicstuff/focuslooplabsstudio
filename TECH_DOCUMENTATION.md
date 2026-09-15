@@ -1,9 +1,9 @@
-# SaveSpace: Technical Architecture & Living Design Specification
+# Focusloop Studio: Technical Architecture & Living Design Specification
 
 > **Document Status**: Active / Authoritative Reference  
 > **Target Audience**: Developers, AI Engineering Assistants, Systems Architects  
 > **Last Updated**: September 2026  
-> **Repository**: [https://github.com/verycosmicstuff/savespace.git](https://github.com/verycosmicstuff/savespace.git)
+> **Repository**: [https://github.com/verycosmicstuff/focuslooplabsstudio.git](https://github.com/verycosmicstuff/focuslooplabsstudio.git)
 
 ---
 

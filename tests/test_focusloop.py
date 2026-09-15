@@ -18,7 +18,7 @@ from src.analyzer.deduper import DuplicateDetector
 from src.transcoder.engine import TranscodeJob, TRANSCODE_PROFILES
 from src.config import FFMPEG_PATH, FFPROBE_PATH
 
-class TestSaveSpace(unittest.TestCase):
+class TestFocusloop(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         init_db()
