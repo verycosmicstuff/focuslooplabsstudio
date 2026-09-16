@@ -23,6 +23,7 @@
 - Added drive label/role editing (`PATCH /api/sources/{id}`) and modal with Enter-to-save.
 - Added live Pause, Resume, Cancel controls for indexing (`/api/sources/{id}/pause|resume|cancel`).
 - Persisted live scanning/paused states across refreshes (`GET /api/sources` reports active indexer status; UI maintains Pause/Resume buttons and live polling).
+- Released **v2.0**: Built & uploaded Windows portable ZIP (`FocusloopLabs-v2.0-Portable.zip`, 198.2 MB) and triggered macOS Apple Silicon cloud build on GitHub Actions.
 - All 34/34 unit tests passing.
 
 ## Active Objective
