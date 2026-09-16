@@ -14,6 +14,7 @@
 - `src/proofing/`: `watermarker.py`, `contact_sheet.py`, `presets.py`.
 - `src/api/server.py`: REST API (mounts, culling, transcodes, scan controls).
 - `ui/`: Responsive dark dashboard (`index.html`, `js/app.js`, `css/app.css`).
+- `docs/`: `WEBSITE_DEPLOYMENT.md` (website repos `cec-tracker` & `cec-data` deploying `focuslooplabs.vercel.app`).
 
 ## Recent Changes
 - Implemented dynamic volume fingerprinting (`.focusloop_id`) and multi-mount aliasing for USB (`E:\`) and NAS (`\\10.0.0.87\...`) switching without duplicate entries.
