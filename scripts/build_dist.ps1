@@ -4,6 +4,7 @@
 param(
     [string]$DistDir = "$PSScriptRoot\..\dist\FocusloopLabs",
     [string]$PythonHost = "",
+    [string]$Version = "v2.0",
     [switch]$SkipPython,
     [switch]$MakeZip
 )
@@ -170,7 +171,7 @@ Remove-Item -Path (Join-Path $DistDir "logs\*.log") -Force -ErrorAction Silently
 # 7. Optional ZIP creation
 if ($MakeZip) {
     Write-Host "`n[6/6] Generating portable ZIP archive..." -ForegroundColor Yellow
-    $zipPath = Join-Path (Split-Path $DistDir -Parent) "FocusloopLabs-v1.0-Portable.zip"
+    $zipPath = Join-Path (Split-Path $DistDir -Parent) "FocusloopLabs-$Version-Portable.zip"
     if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
     Compress-Archive -Path "$DistDir\*" -DestinationPath $zipPath -CompressionLevel Optimal
     Write-Host "Created portable package: $zipPath ($((Get-Item $zipPath).Length / 1MB | ForEach-Object { '{0:N1} MB' -f $_ }))" -ForegroundColor Green

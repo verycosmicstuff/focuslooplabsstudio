@@ -1,4 +1,4 @@
-﻿name: Build macOS Portable Release
+name: Build macOS Portable Release
 
 on:
   workflow_dispatch:
@@ -76,14 +76,18 @@ jobs:
       - name: Package Portable ZIP (Preserving Symlinks & Permissions)
         run: |
           cd dist
-          ditto -c -k --keepParent "Focusloop Studio.app" FocusloopStudio-v1.0-macOS-arm64-Portable.zip
-          ls -lh FocusloopStudio-v1.0-macOS-arm64-Portable.zip
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [[ "$TAG" != v* ]]; then TAG="v2.0"; fi
+          ZIP_NAME="FocusloopStudio-${TAG}-macOS-arm64-Portable.zip"
+          echo "Packaging $ZIP_NAME..."
+          ditto -c -k --keepParent "Focusloop Studio.app" "$ZIP_NAME"
+          ls -lh "$ZIP_NAME"
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
           name: FocusloopStudio-macOS-Portable
-          path: dist/FocusloopStudio-v1.0-macOS-arm64-Portable.zip
+          path: dist/FocusloopStudio-*-macOS-arm64-Portable.zip
 
       - name: Attach to GitHub Release (If Tagged)
         env:
@@ -92,5 +96,5 @@ jobs:
           TAG_NAME="${GITHUB_REF#refs/tags/}"
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             echo "Uploading portable zip to release $TAG_NAME..."
-            gh release upload "$TAG_NAME" dist/FocusloopStudio-v1.0-macOS-arm64-Portable.zip --clobber || true
+            gh release upload "$TAG_NAME" dist/FocusloopStudio-*-macOS-arm64-Portable.zip --clobber || true
           fi

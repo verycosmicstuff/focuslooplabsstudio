@@ -45,7 +45,7 @@ from src.proofing.presets import get_all_presets, save_preset, delete_preset
 
 logger = get_logger("api")
 
-app = FastAPI(title="SaveSpace Backend", version="1.0.0")
+app = FastAPI(title="Focusloop Labs Backend", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,

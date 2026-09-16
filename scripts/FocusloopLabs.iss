@@ -3,7 +3,7 @@
 ; Prerequisites: Compile dist\SaveSpace first using scripts\build_dist.ps1
 
 #define MyAppName "Focusloop Labs"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "2.0.0"
 #define MyAppPublisher "Focusloop Labs"
 #define MyAppURL "https://focuslooplabs.vercel.app/"
 #define MyAppExeName "FocusloopLabs.exe"
@@ -38,7 +38,7 @@ WizardStyle=modern
 
 ; Branding & Metadata
 UninstallDisplayIcon={app}\{#MyAppExeName}
-VersionInfoVersion=1.0.0.0
+VersionInfoVersion=2.0.0.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=Focusloop Labs — Creative Media Assistant & Storage Manager
 VersionInfoProductName={#MyAppName}
