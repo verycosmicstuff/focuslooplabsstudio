@@ -225,7 +225,7 @@ document.querySelectorAll('.nav-item').forEach(item => {
       culler: 'Blur & Burst Photo Culler',
       duplicates: 'Duplicate Media Finder',
       transcoder: 'GPU-Accelerated H.265 Transcoder (NVENC)',
-      sync: 'SSD & NAS Backup Sync Matrix',
+      sync: 'Primary & Backup Directory Sync Matrix',
       organizer: 'Smart Media Organizer',
       proofing: 'Client Proofing, Watermarking & Selects'
     };
@@ -335,25 +335,72 @@ async function loadSources() {
       const excludedBadge = excludedCount > 0 
         ? ' <span class="brand-badge" style="background:rgba(245,158,11,0.2); color:var(--accent-amber); font-size:11px; cursor:pointer;" onclick="openSubfoldersModal(' + s.id + ')" title="' + excludedCount + ' subfolders deselected">' + excludedCount + ' deselected</span>'
         : '';
+      const aliasCount = (s.alternate_paths && s.alternate_paths.length) || 0;
+      const aliasBadge = aliasCount > 1
+        ? ' <span class="brand-badge" style="background:rgba(99,102,241,0.2); color:#a5b4fc; font-size:11px;" title="Alternate Mounts (USB/NAS):\n' + s.alternate_paths.join('\n') + '">🔗 ' + aliasCount + ' Mounts</span>'
+        : '';
 
-      tr.innerHTML = '<td style="font-weight:600;">' + s.label + '</td>'
-        + '<td style="font-family:monospace; font-size:12px;">' + s.path + excludedBadge + '</td>'
-        + '<td><span class="brand-badge">' + s.drive_type + '</span></td>'
+      const isScanning = s.scan_status === 'scanning';
+      const isPaused = s.scan_status === 'paused';
+      
+      let countHtml = (s.file_count || 0).toLocaleString();
+      let scanButtonsHtml = '<button class="btn btn-primary btn-sm" onclick="scanSource(' + s.id + ')" style="margin-right:4px;">Scan Now</button>';
+      
+      if (isScanning) {
+        const liveCnt = (s.live_scanned_count !== undefined && s.live_scanned_count !== null) ? s.live_scanned_count : (s.file_count || 0);
+        countHtml = '<span style="color:var(--accent-cyan); font-weight:700;">' + Number(liveCnt).toLocaleString() + '</span> <span style="font-size:11px; color:var(--text-muted);">(scanning...)</span>';
+        scanButtonsHtml = '<button class="btn btn-warning btn-sm" onclick="pauseSourceScan(' + s.id + ')" style="margin-right:4px; font-weight:600;" title="Pause Indexing">⏸️ Pause</button>'
+          + '<button class="btn btn-secondary btn-sm" onclick="cancelSourceScan(' + s.id + ')" style="margin-right:4px;" title="Cancel Scan">⏹️</button>';
+      } else if (isPaused) {
+        const liveCnt = (s.live_scanned_count !== undefined && s.live_scanned_count !== null) ? s.live_scanned_count : (s.file_count || 0);
+        countHtml = '<span style="color:var(--accent-amber); font-weight:700;">' + Number(liveCnt).toLocaleString() + '</span> <span style="font-size:11px; color:var(--accent-amber);">(⏸️ PAUSED)</span>';
+        scanButtonsHtml = '<button class="btn btn-success btn-sm" onclick="resumeSourceScan(' + s.id + ')" style="margin-right:4px; font-weight:600;" title="Resume Indexing">▶️ Resume</button>'
+          + '<button class="btn btn-secondary btn-sm" onclick="cancelSourceScan(' + s.id + ')" style="margin-right:4px;" title="Cancel Scan">⏹️</button>';
+      }
+
+      tr.id = 'source-row-' + s.id;
+      tr.innerHTML = '<td style="font-weight:600;"><div style="display:flex; align-items:center; gap:6px;"><span>' + s.label + '</span><button class="btn btn-secondary btn-sm" onclick="openEditSourceModal(' + s.id + ')" title="Rename / Change Label" style="padding:1px 6px; font-size:11px; opacity:0.75;">✏️</button></div></td>'
+        + '<td style="font-family:monospace; font-size:12px;">' + s.path + aliasBadge + excludedBadge + '</td>'
+        + '<td><span class="brand-badge" style="cursor:pointer;" onclick="openEditSourceModal(' + s.id + ')" title="Click to change drive type">' + s.drive_type + '</span></td>'
         + '<td>' + onlineTag + '</td>'
-        + '<td>' + (s.file_count || 0).toLocaleString() + '</td>'
+        + '<td id="source-count-' + s.id + '">' + countHtml + '</td>'
         + '<td>' + formatBytes(s.total_media_size || 0) + '</td>'
         + '<td style="font-size:11px; color:var(--text-muted);">' + (s.last_scanned ? s.last_scanned.split('T')[0] : 'Never') + '</td>'
         + '<td style="white-space:nowrap;">'
+        + '<button class="btn btn-secondary btn-sm" onclick="openEditSourceModal(' + s.id + ')" style="margin-right:4px;">✏️ Label</button>'
         + '<button class="btn btn-secondary btn-sm" onclick="openSubfoldersModal(' + s.id + ')" style="margin-right:4px;">📁 Folders' + (excludedCount > 0 ? ' (' + excludedCount + ')' : '') + '</button>'
-        + '<button class="btn btn-primary btn-sm" onclick="scanSource(' + s.id + ')" style="margin-right:4px;">Scan Now</button>'
+        + '<span id="scan-actions-' + s.id + '">' + scanButtonsHtml + '</span>'
         + '<button class="btn btn-secondary btn-sm" onclick="deleteSource(' + s.id + ')">Remove</button>'
         + '</td>';
       tbody.appendChild(tr);
+
+      if (isScanning || isPaused) {
+        pollScanProgress(s.id);
+      }
     });
   } catch (err) {
     console.error('Failed to load sources:', err);
   }
 }
+
+window.openEditSourceModal = function(sourceId) {
+  const source = (sourcesData || []).find(s => s.id === sourceId);
+  if (!source) return;
+
+  document.getElementById('edit-source-id').value = source.id;
+  document.getElementById('edit-source-path-display').innerText = source.path;
+  document.getElementById('edit-source-label-input').value = source.label || '';
+  document.getElementById('edit-source-type-select').value = source.drive_type || 'LOCAL';
+
+  const modal = document.getElementById('modal-edit-source');
+  if (modal) {
+    modal.classList.add('active');
+    setTimeout(() => {
+      const inp = document.getElementById('edit-source-label-input');
+      if (inp) { inp.focus(); inp.select(); }
+    }, 50);
+  }
+};
 
 let currentSubfolders = [];
 let currentSubfolderSourceId = null;
@@ -446,32 +493,108 @@ function pollScanProgress(sourceId) {
       if (data.status === 'idle' || data.status === 'completed') {
         clearInterval(pollInterval);
         activeScanPollers.delete(sourceId);
+        updateSourceScanControls(sourceId, 'idle', data.scanned || 0);
         showToast('Scan complete! ' + (data.scanned || 0).toLocaleString() + ' files indexed.', 'success');
         loadSources();
         loadOverview();
+      } else if (data.status === 'cancelled') {
+        clearInterval(pollInterval);
+        activeScanPollers.delete(sourceId);
+        updateSourceScanControls(sourceId, 'idle', data.scanned || 0);
+        showToast('Scan cancelled for source ' + sourceId, 'info');
+        loadSources();
       } else if (data.status === 'error') {
         clearInterval(pollInterval);
         activeScanPollers.delete(sourceId);
+        updateSourceScanControls(sourceId, 'idle');
         showToast('Scan error: ' + (data.error || 'Unknown error'), 'error');
-      } else if (data.status === 'scanning' && data.scanned_count) {
-        // Live feedback in status row if on sources tab
-        const rows = document.querySelectorAll('#sources-table-body tr');
-        rows.forEach(r => {
-          if (r.innerHTML.includes('scanSource(' + sourceId + ')')) {
-            const lastTd = r.children[4];
-            if (lastTd) lastTd.textContent = data.scanned_count.toLocaleString() + ' (scanning...)';
-          }
-        });
+      } else if (data.status === 'paused') {
+        updateSourceScanControls(sourceId, 'paused', data.scanned_count || data.scanned || 0);
+      } else if (data.status === 'scanning') {
+        updateSourceScanControls(sourceId, 'scanning', data.scanned_count || data.scanned || 0);
       }
     } catch (e) {
       clearInterval(pollInterval);
       activeScanPollers.delete(sourceId);
     }
-  }, 2500);
+  }, 2000);
 }
+
+function updateSourceScanControls(sourceId, status, count) {
+  const countEl = document.getElementById('source-count-' + sourceId);
+  const actionsEl = document.getElementById('scan-actions-' + sourceId);
+  
+  if (status === 'scanning') {
+    if (countEl && count !== undefined) {
+      countEl.innerHTML = '<span style="color:var(--accent-cyan); font-weight:700;">' + Number(count).toLocaleString() + '</span> <span style="font-size:11px; color:var(--text-muted);">(scanning...)</span>';
+    }
+    if (actionsEl) {
+      actionsEl.innerHTML = '<button class="btn btn-warning btn-sm" onclick="pauseSourceScan(' + sourceId + ')" style="margin-right:4px; font-weight:600;" title="Pause Indexing">⏸️ Pause</button>'
+        + '<button class="btn btn-secondary btn-sm" onclick="cancelSourceScan(' + sourceId + ')" style="margin-right:4px;" title="Cancel Scan">⏹️</button>';
+    }
+  } else if (status === 'paused') {
+    if (countEl && count !== undefined) {
+      countEl.innerHTML = '<span style="color:var(--accent-amber); font-weight:700;">' + Number(count).toLocaleString() + '</span> <span style="font-size:11px; color:var(--accent-amber);">(⏸️ PAUSED)</span>';
+    }
+    if (actionsEl) {
+      actionsEl.innerHTML = '<button class="btn btn-success btn-sm" onclick="resumeSourceScan(' + sourceId + ')" style="margin-right:4px; font-weight:600;" title="Resume Indexing">▶️ Resume</button>'
+        + '<button class="btn btn-secondary btn-sm" onclick="cancelSourceScan(' + sourceId + ')" style="margin-right:4px;" title="Cancel Scan">⏹️</button>';
+    }
+  } else {
+    if (actionsEl) {
+      actionsEl.innerHTML = '<button class="btn btn-primary btn-sm" onclick="scanSource(' + sourceId + ')" style="margin-right:4px;">Scan Now</button>';
+    }
+  }
+}
+
+window.pauseSourceScan = async function(id) {
+  try {
+    const res = await fetch(API_BASE + '/api/sources/' + id + '/pause', { method: 'POST' });
+    if (res.ok) {
+      showToast('Indexing paused.', 'info');
+      updateSourceScanControls(id, 'paused');
+    } else {
+      const err = await res.json();
+      showToast(err.detail || 'Could not pause scan', 'error');
+    }
+  } catch (e) {
+    showToast('Failed to pause scan: ' + e, 'error');
+  }
+};
+
+window.resumeSourceScan = async function(id) {
+  try {
+    const res = await fetch(API_BASE + '/api/sources/' + id + '/resume', { method: 'POST' });
+    if (res.ok) {
+      showToast('Indexing resumed!', 'success');
+      updateSourceScanControls(id, 'scanning');
+      pollScanProgress(id);
+    } else {
+      const err = await res.json();
+      showToast(err.detail || 'Could not resume scan', 'error');
+    }
+  } catch (e) {
+    showToast('Failed to resume scan: ' + e, 'error');
+  }
+};
+
+window.cancelSourceScan = async function(id) {
+  if (!confirm('Cancel the running scan for this drive? Files indexed so far will be kept.')) return;
+  try {
+    const res = await fetch(API_BASE + '/api/sources/' + id + '/cancel', { method: 'POST' });
+    if (res.ok) {
+      showToast('Indexing cancelled.', 'info');
+      updateSourceScanControls(id, 'idle');
+      loadSources();
+    }
+  } catch (e) {
+    showToast('Failed to cancel scan: ' + e, 'error');
+  }
+};
 
 window.scanSource = async function(id) {
   try {
+    updateSourceScanControls(id, 'scanning');
     const res = await fetch(API_BASE + '/api/sources/' + id + '/scan', { method: 'POST' });
     if (res.ok) {
       showToast('Scan started in background! Indexing files live...', 'info');
@@ -479,9 +602,11 @@ window.scanSource = async function(id) {
     } else {
       const err = await res.json();
       showToast(err.detail || 'Failed to start scan', 'error');
+      updateSourceScanControls(id, 'idle');
     }
   } catch (e) {
     showToast('Failed to start scan: ' + e, 'error');
+    updateSourceScanControls(id, 'idle');
   }
 };
 
@@ -1693,7 +1818,7 @@ document.getElementById('btn-compare-sync').addEventListener('click', async () =
   const wId = document.getElementById('sel-sync-working').value;
   const bId = document.getElementById('sel-sync-backup').value;
   if (wId === bId) {
-    alert('Please choose two different drives to compare (e.g. Working SSD vs NAS Backup)!');
+    alert('Please choose two different directories to compare (Primary Working Directory vs Backup Directory)!');
     return;
   }
 
@@ -1707,7 +1832,7 @@ document.getElementById('btn-compare-sync').addEventListener('click', async () =
     const syncedContainer = document.getElementById('synced-safe-list');
     syncedContainer.innerHTML = '';
     if (syncMatrixData.synced_safe.length === 0) {
-      syncedContainer.innerHTML = '<p style="color:var(--text-muted); font-size:13px;">No matching verified backups found on target drive.</p>';
+      syncedContainer.innerHTML = '<p style="color:var(--text-muted); font-size:13px;">No matching verified backups found in Backup Directory.</p>';
     } else {
       syncMatrixData.synced_safe.forEach(f => {
         syncedContainer.innerHTML += '<div style="font-size:12px; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.05); display:flex; justify-content:space-between;">'
@@ -1720,7 +1845,7 @@ document.getElementById('btn-compare-sync').addEventListener('click', async () =
     const unbackedContainer = document.getElementById('unbacked-up-list');
     unbackedContainer.innerHTML = '';
     if (syncMatrixData.unbacked_up.length === 0) {
-      unbackedContainer.innerHTML = '<p style="color:var(--accent-emerald); font-size:13px;">All files on working drive are safely backed up!</p>';
+      unbackedContainer.innerHTML = '<p style="color:var(--accent-emerald); font-size:13px;">All files in Primary Working Directory are safely backed up!</p>';
     } else {
       syncMatrixData.unbacked_up.forEach(f => {
         unbackedContainer.innerHTML += '<div style="font-size:12px; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.05); display:flex; justify-content:space-between;">'
@@ -1730,20 +1855,20 @@ document.getElementById('btn-compare-sync').addEventListener('click', async () =
       });
     }
   } catch (e) {
-    alert('Failed to compare drives: ' + e);
+    alert('Failed to compare directories: ' + e);
   }
 });
 
 document.getElementById('btn-reclaim-safe-ssd').addEventListener('click', async () => {
   if (!syncMatrixData || syncMatrixData.synced_safe.length === 0) {
-    alert('No verified safe files to reclaim. Compare drives first!');
+    alert('No verified safe files to reclaim. Compare directories first!');
     return;
   }
 
   const count = syncMatrixData.synced_safe.length;
   const size = formatBytes(syncMatrixData.safe_reclaimable_bytes);
 
-  if (!confirm('Reclaim ' + size + ' on your SSD by recycling ' + count + ' files that are cryptographically verified on your backup drive? (XMP sidecars will be safely handled)')) return;
+  if (!confirm('Reclaim ' + size + ' in your Primary Working Directory by recycling ' + count + ' files that are cryptographically verified in your Backup Directory? (XMP sidecars will be safely handled)')) return;
 
   try {
     const fileIds = syncMatrixData.synced_safe.map(f => f.id);
@@ -1753,7 +1878,7 @@ document.getElementById('btn-reclaim-safe-ssd').addEventListener('click', async 
       body: JSON.stringify(fileIds)
     });
     const result = await res.json();
-    alert('Successfully reclaimed space! Recycled ' + result.reclaimed_count + ' local files.');
+    alert('Successfully reclaimed space! Recycled ' + result.reclaimed_count + ' files from Primary Working Directory.');
     loadOverview();
   } catch (e) {
     alert('Error: ' + e);
@@ -2024,7 +2149,11 @@ document.getElementById('modal-btn-save-source').addEventListener('click', async
       return;
     }
     modalAddSource.classList.remove('active');
-    showToast(`Source "${label}" registered! Scan started.`, 'success');
+    if (resData.status === 'alias_linked') {
+      showToast(resData.message || 'Volume recognized! Linked as alternate mount path.', 'success');
+    } else {
+      showToast(`Source "${label}" registered! Scan started.`, 'success');
+    }
     loadOverview();
     loadSources();
 
@@ -2035,6 +2164,50 @@ document.getElementById('modal-btn-save-source').addEventListener('click', async
     showToast('Failed to add source: ' + e, 'error');
   }
 });
+
+// Edit Source Details Save Handler
+const btnConfirmSaveSourceLabel = document.getElementById('btn-confirm-save-source-label');
+if (btnConfirmSaveSourceLabel) {
+  btnConfirmSaveSourceLabel.addEventListener('click', async () => {
+    const sourceId = document.getElementById('edit-source-id').value;
+    const newLabel = document.getElementById('edit-source-label-input').value.trim();
+    const newType = document.getElementById('edit-source-type-select').value;
+
+    if (!newLabel) {
+      showToast('Please enter a valid label.', 'error');
+      return;
+    }
+
+    try {
+      const res = await fetch(API_BASE + '/api/sources/' + sourceId, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: newLabel, drive_type: newType })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || 'Failed to update label', 'error');
+        return;
+      }
+      const modal = document.getElementById('modal-edit-source');
+      if (modal) modal.classList.remove('active');
+      showToast('Updated: "' + newLabel + '"', 'success');
+      loadSources();
+      loadOverview();
+    } catch (e) {
+      showToast('Error updating source: ' + e, 'error');
+    }
+  });
+
+  const txtEditLabel = document.getElementById('edit-source-label-input');
+  if (txtEditLabel) {
+    txtEditLabel.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        btnConfirmSaveSourceLabel.click();
+      }
+    });
+  }
+}
 
 // Native Windows Folder Picker Triggers
 const btnBrowseSource = document.getElementById('btn-browse-source');

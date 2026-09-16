@@ -20,10 +20,20 @@ from src.proofing.contact_sheet import (
 class TestProofingAndWatermark(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        import src.config
+        import src.core.db
+
         cls.test_dir = Path(__file__).resolve().parent / "mock_proofing"
         if cls.test_dir.exists():
             shutil.rmtree(cls.test_dir)
         cls.test_dir.mkdir(parents=True, exist_ok=True)
+
+        cls.orig_db_path = src.config.DB_PATH
+        cls.test_db_path = cls.test_dir / "test_proofing.db"
+        src.config.DB_PATH = cls.test_db_path
+        src.core.db._thread_local.conn = None
+        from src.core.db import init_db
+        init_db()
 
         # Create sample base test image (3000 x 2000)
         cls.sample_photo = cls.test_dir / "DSCF1001.JPG"
@@ -50,6 +60,10 @@ class TestProofingAndWatermark(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        import src.config
+        from src.core.db import close_db
+        src.config.DB_PATH = cls.orig_db_path
+        close_db()
         if cls.test_dir.exists():
             shutil.rmtree(cls.test_dir)
 

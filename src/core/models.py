@@ -6,10 +6,16 @@ class SourceCreate(BaseModel):
     label: str
     drive_type: Optional[str] = "LOCAL"
     excluded_paths: Optional[List[str]] = []
+    volume_uuid: Optional[str] = None
+    alternate_paths: Optional[List[str]] = []
 
 class SourceExclusionsUpdate(BaseModel):
     excluded_paths: List[str]
     purge_indexed: Optional[bool] = True
+
+class SourceUpdate(BaseModel):
+    label: Optional[str] = None
+    drive_type: Optional[str] = None
 
 class SourceResponse(BaseModel):
     id: int
@@ -20,6 +26,8 @@ class SourceResponse(BaseModel):
     free_bytes: int
     is_online: bool
     excluded_paths: Optional[List[str]] = []
+    volume_uuid: Optional[str] = None
+    alternate_paths: Optional[List[str]] = []
     last_scanned: Optional[str] = None
     file_count: Optional[int] = 0
     total_media_size: Optional[int] = 0

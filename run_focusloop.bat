@@ -1,6 +1,9 @@
 @echo off
 title Focusloop Labs Launcher
 cd /d "%~dp0"
+if exist "%~dp0FocusloopLabs_v2.exe" (
+    move /y "%~dp0FocusloopLabs_v2.exe" "%~dp0FocusloopLabs.exe" >nul 2>nul
+)
 echo Starting Focusloop Labs Desktop App...
 
 set "PYTHON_EXE="

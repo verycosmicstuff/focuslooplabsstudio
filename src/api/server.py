@@ -18,11 +18,15 @@ from src.config import (
     RAW_EXTS, PHOTO_EXTS, VIDEO_EXTS
 )
 from src.core.db import get_db, init_db, db_transaction
-from src.core.models import SourceCreate, SourceExclusionsUpdate, CullingAction, TranscodeRequest, OrganizeRule
+from src.core.models import SourceCreate, SourceExclusionsUpdate, SourceUpdate, CullingAction, TranscodeRequest, OrganizeRule
 from src.core.logger import get_logger, LOG_FILE, LOGS_DIR
 from src.core.session import get_session_state, save_session_state, record_last_task
 from src.scanner.indexer import SourceIndexer
 from src.scanner.meta_extractor import generate_thumbnail
+from src.scanner.volume import (
+    get_or_create_volume_uuid, read_volume_uuid, verify_volume_match,
+    update_source_mount_path, find_source_by_volume_uuid
+)
 from src.analyzer.culler import CullingEngine, compute_blur_score
 from src.analyzer.deduper import DuplicateDetector
 from src.transcoder.engine import transcode_queue, TRANSCODE_PROFILES
@@ -67,6 +71,7 @@ async def log_requests(request: Request, call_next):
 
 # In-memory scan states
 scan_progress = {}
+active_indexers: Dict[int, Any] = {}
 
 @app.on_event("startup")
 def on_startup():
@@ -95,11 +100,43 @@ def list_sources():
         except Exception:
             s["excluded_paths"] = []
 
+        try:
+            s["alternate_paths"] = json.loads(s.get("alternate_paths") or "[]")
+        except Exception:
+            s["alternate_paths"] = []
+
+        current_p = Path(s["path"])
+        vol_uuid = s.get("volume_uuid")
+        alternate_paths = s["alternate_paths"]
+
+        # If current primary path is offline, probe alternate paths
+        if not current_p.exists():
+            for alt_p_str in alternate_paths:
+                alt_p = Path(alt_p_str)
+                if alt_p.exists():
+                    if not vol_uuid or verify_volume_match(alt_p, vol_uuid):
+                        logger.info(f"Source {s['id']} offline at '{s['path']}'; switching to active alias '{alt_p_str}'")
+                        update_source_mount_path(s["id"], alt_p_str)
+                        s["path"] = alt_p_str
+                        current_p = alt_p
+                        break
+        else:
+            # If current active path is a network/UNC path, but a direct local path in alternates is online, switch to local for speed
+            if s["path"].startswith("\\\\"):
+                for alt_p_str in alternate_paths:
+                    if not alt_p_str.startswith("\\\\"):
+                        alt_p = Path(alt_p_str)
+                        if alt_p.exists() and (not vol_uuid or verify_volume_match(alt_p, vol_uuid)):
+                            logger.info(f"Source {s['id']} local mount '{alt_p_str}' is online; upgrading from UNC '{s['path']}'")
+                            update_source_mount_path(s["id"], alt_p_str)
+                            s["path"] = alt_p_str
+                            current_p = alt_p
+                            break
+
         # Get live capacity if possible
         try:
-            p = Path(s["path"])
-            if p.exists():
-                usage = psutil.disk_usage(str(p))
+            if current_p.exists():
+                usage = psutil.disk_usage(str(current_p))
                 s["total_bytes"] = usage.total
                 s["free_bytes"] = usage.free
                 s["is_online"] = True
@@ -117,6 +154,19 @@ def list_sources():
         s["file_count"] = stats["count"]
         s["total_media_size"] = stats["total_size"]
 
+        # Active scan status & live count
+        indexer = active_indexers.get(s["id"])
+        prog = scan_progress.get(s["id"], {})
+        if indexer and indexer.is_running:
+            if indexer.is_paused:
+                s["scan_status"] = "paused"
+            else:
+                s["scan_status"] = "scanning"
+            s["live_scanned_count"] = prog.get("scanned_count") or prog.get("scanned") or getattr(indexer, "scanned_count", 0)
+        else:
+            s["scan_status"] = "idle"
+            s["live_scanned_count"] = prog.get("scanned_count") or prog.get("scanned") or 0
+
     return sources
 
 @app.post("/api/sources")
@@ -127,6 +177,53 @@ def add_source(data: SourceCreate):
 
     conn = get_db()
     cursor = conn.cursor()
+
+    # 1. Check for existing volume fingerprint on disk
+    existing_vol_uuid = read_volume_uuid(p)
+    if existing_vol_uuid:
+        cursor.execute("SELECT * FROM sources WHERE volume_uuid = ?", (existing_vol_uuid,))
+        matched_source = cursor.fetchone()
+        if matched_source:
+            src_id = matched_source["id"]
+            logger.info(f"Recognized existing volume {existing_vol_uuid} for source {src_id} at '{p}'")
+
+            curr_active = Path(matched_source["path"])
+            is_curr_online = curr_active.exists()
+            is_new_local = not str(p).startswith("\\\\")
+            is_curr_network = str(curr_active).startswith("\\\\")
+            should_switch = (not is_curr_online) or (is_new_local and is_curr_network)
+
+            if should_switch:
+                update_source_mount_path(src_id, str(p))
+            else:
+                try:
+                    alts = json.loads(matched_source["alternate_paths"] or "[]")
+                except Exception:
+                    alts = []
+                alt_set = {str(Path(a).resolve()).lower(): str(Path(a).resolve()) for a in alts if a}
+                alt_set[str(p).lower()] = str(p)
+                with db_transaction() as tx:
+                    tx.execute("UPDATE sources SET alternate_paths = ? WHERE id = ?", (json.dumps(list(alt_set.values())), src_id))
+
+            return {
+                "id": src_id,
+                "status": "alias_linked",
+                "message": f"Volume recognized as '{matched_source['label']}'! Linked '{str(p)}' as an alternate mount path."
+            }
+
+    # 2. Check if this exact path is already registered under any source
+    cursor.execute("SELECT id, label FROM sources WHERE LOWER(path) = LOWER(?)", (str(p),))
+    existing_path_row = cursor.fetchone()
+    if existing_path_row:
+        return {
+            "id": existing_path_row["id"],
+            "status": "already_registered",
+            "message": f"Source '{existing_path_row['label']}' is already registered at this path."
+        }
+
+    # 3. New source: stamp or retrieve volume UUID
+    vol_uuid = get_or_create_volume_uuid(p, label=data.label)
+
     try:
         usage = psutil.disk_usage(str(p))
         total_b = usage.total
@@ -136,14 +233,35 @@ def add_source(data: SourceCreate):
         free_b = 0
 
     try:
-        cursor.execute("""
-            INSERT INTO sources (path, label, drive_type, total_bytes, free_bytes, is_online, excluded_paths)
-            VALUES (?, ?, ?, ?, ?, 1, ?)
-        """, (str(p), data.label, data.drive_type or "LOCAL", total_b, free_b, json.dumps(data.excluded_paths or [])))
-        conn.commit()
-        return {"id": cursor.lastrowid, "message": "Source registered successfully"}
+        alts = [str(p)]
+        with db_transaction() as tx:
+            tx_cur = tx.cursor()
+            tx_cur.execute("""
+                INSERT INTO sources (path, label, drive_type, total_bytes, free_bytes, is_online, excluded_paths, volume_uuid, alternate_paths)
+                VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+            """, (
+                str(p), data.label, data.drive_type or "LOCAL",
+                total_b, free_b, json.dumps(data.excluded_paths or []),
+                vol_uuid, json.dumps(alts)
+            ))
+            new_id = tx_cur.lastrowid
+        return {"id": new_id, "status": "created", "message": "Source registered successfully"}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Source already registered or invalid: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to register source: {str(e)}")
+
+@app.post("/api/sources/{source_id}/add_alias")
+def add_source_alias(source_id: int, payload: Dict[str, str]):
+    alt_path_str = payload.get("path", "").strip()
+    if not alt_path_str:
+        raise HTTPException(status_code=400, detail="Missing path")
+    p = Path(alt_path_str).resolve()
+    if not p.exists():
+        raise HTTPException(status_code=400, detail=f"Path '{alt_path_str}' does not exist on this machine")
+
+    res = update_source_mount_path(source_id, str(p))
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("error", "Failed to update mount path"))
+    return res
 
 @app.get("/api/sources/{source_id}/subfolders")
 def get_source_subfolders(source_id: int):
@@ -310,6 +428,36 @@ def delete_source(source_id: int):
     conn.commit()
     return {"message": "Source removed"}
 
+@app.patch("/api/sources/{source_id}")
+def update_source_details(source_id: int, payload: SourceUpdate):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, label, drive_type FROM sources WHERE id = ?", (source_id,))
+    row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    new_label = payload.label.strip() if payload.label is not None else row["label"]
+    new_type = payload.drive_type.strip() if payload.drive_type is not None else row["drive_type"]
+
+    if not new_label:
+        raise HTTPException(status_code=400, detail="Label cannot be empty")
+
+    with db_transaction() as tx:
+        tx.execute(
+            "UPDATE sources SET label = ?, drive_type = ? WHERE id = ?",
+            (new_label, new_type, source_id)
+        )
+    logger.info(f"Updated source {source_id} label to '{new_label}' (type: {new_type})")
+    return {
+        "success": True,
+        "source_id": source_id,
+        "label": new_label,
+        "drive_type": new_type,
+        "message": f"Updated source to '{new_label}'"
+    }
+
+
 @app.post("/api/sources/{source_id}/scan")
 def trigger_scan(source_id: int, background_tasks: BackgroundTasks):
     conn = get_db()
@@ -319,13 +467,21 @@ def trigger_scan(source_id: int, background_tasks: BackgroundTasks):
     if not row:
         raise HTTPException(status_code=404, detail="Source not found")
 
+    if source_id in active_indexers and active_indexers[source_id].is_running:
+        if active_indexers[source_id].is_paused:
+            active_indexers[source_id].resume()
+            return {"message": "Resumed existing paused scan", "status": "scanning"}
+        return {"message": "Scan already in progress", "status": "scanning"}
+
     def run_indexer():
+        indexer = None
         try:
             scan_progress[source_id] = {"status": "scanning", "scanned": 0, "size": 0}
             def on_prog(p):
                 scan_progress[source_id] = p
             
             indexer = SourceIndexer(source_id, row["path"], progress_cb=on_prog)
+            active_indexers[source_id] = indexer
             indexer.scan()
             scan_progress[source_id] = {"status": "idle", "scanned": indexer.scanned_count}
             logger.info(f"Source {source_id} scan completed: {indexer.scanned_count} files indexed.")
@@ -340,13 +496,59 @@ def trigger_scan(source_id: int, background_tasks: BackgroundTasks):
         except Exception as e:
             logger.error(f"Error during scan of source {source_id}: {e}", exc_info=True)
             scan_progress[source_id] = {"status": "error", "error": str(e)}
+        finally:
+            active_indexers.pop(source_id, None)
 
     background_tasks.add_task(run_indexer)
     return {"message": "Scan started in background"}
 
+@app.post("/api/sources/{source_id}/pause")
+def pause_scan(source_id: int):
+    indexer = active_indexers.get(source_id)
+    if not indexer or not indexer.is_running:
+        raise HTTPException(status_code=400, detail="No active scan running for this source")
+    indexer.pause()
+    if source_id in scan_progress:
+        scan_progress[source_id]["status"] = "paused"
+    logger.info(f"Source {source_id} scan paused.")
+    return {"message": "Scan paused", "source_id": source_id, "status": "paused"}
+
+@app.post("/api/sources/{source_id}/resume")
+def resume_scan(source_id: int):
+    indexer = active_indexers.get(source_id)
+    if not indexer or not indexer.is_running:
+        raise HTTPException(status_code=400, detail="No paused scan found for this source")
+    indexer.resume()
+    if source_id in scan_progress:
+        scan_progress[source_id]["status"] = "scanning"
+    logger.info(f"Source {source_id} scan resumed.")
+    return {"message": "Scan resumed", "source_id": source_id, "status": "scanning"}
+
+@app.post("/api/sources/{source_id}/cancel")
+def cancel_scan(source_id: int):
+    indexer = active_indexers.get(source_id)
+    if not indexer:
+        raise HTTPException(status_code=400, detail="No active scan to cancel for this source")
+    indexer.stop()
+    scan_progress[source_id] = {"status": "idle", "scanned": indexer.scanned_count}
+    logger.info(f"Source {source_id} scan cancelled.")
+    return {"message": "Scan cancelled", "source_id": source_id, "status": "cancelled"}
+
 @app.get("/api/sources/{source_id}/scan_status")
 def get_scan_status(source_id: int):
-    return scan_progress.get(source_id, {"status": "idle"})
+    status_info = dict(scan_progress.get(source_id, {"status": "idle"}))
+    indexer = active_indexers.get(source_id)
+    if indexer:
+        status_info["is_active"] = indexer.is_running
+        status_info["is_paused"] = indexer.is_paused
+        if indexer.is_paused:
+            status_info["status"] = "paused"
+    else:
+        status_info["is_active"] = False
+        status_info["is_paused"] = False
+        if status_info.get("status") in ("scanning", "paused"):
+            status_info["status"] = "idle"
+    return status_info
 
 # ----------------- DASHBOARD STATS -----------------
 
@@ -1251,6 +1453,50 @@ def list_photos_in_dir(payload: Dict[str, Any]):
     if limit and isinstance(limit, int) and limit > 0:
         return {"photos": photos[:limit], "total": len(photos)}
     return {"photos": photos, "total": len(photos)}
+
+# ----------------- SSD & NAS SYNC TRACKER -----------------
+
+@app.get("/api/sync/matrix")
+def get_sync_matrix(working_source_id: int, backup_source_id: int):
+    return SyncTracker.get_sync_matrix(working_source_id, backup_source_id)
+
+@app.post("/api/sync/reclaim")
+def reclaim_sync_files(file_ids: List[int]):
+    res = SyncTracker.reclaim_safe_files(file_ids, action="trash")
+    record_last_task(
+        task_type="sync_reclaim",
+        summary=f"Reclaimed {res.get('reclaimed_count', 0)} files safely from working SSD",
+        details=res
+    )
+    return res
+
+# ----------------- SMART ORGANIZER -----------------
+
+@app.post("/api/organize/preview")
+def preview_organize(payload: Dict[str, Any]):
+    source_id = payload.get("source_id")
+    target_root = payload.get("destination_root")
+    pattern = payload.get("pattern", "{year}/{year}-{month}/{camera}/{filename}")
+    if not source_id or not target_root:
+        raise HTTPException(status_code=400, detail="Missing source_id or destination_root")
+    return FileOrganizer.preview_organization(source_id, target_root, pattern)
+
+@app.post("/api/organize/execute")
+def execute_organize(payload: Dict[str, Any]):
+    source_id = payload.get("source_id")
+    target_root = payload.get("destination_root")
+    pattern = payload.get("pattern", "{year}/{year}-{month}/{camera}/{filename}")
+    action = payload.get("action", "move")
+    if not source_id or not target_root:
+        raise HTTPException(status_code=400, detail="Missing source_id or destination_root")
+    plan = FileOrganizer.preview_organization(source_id, target_root, pattern)
+    res = FileOrganizer.execute_organization(plan, operation=action)
+    record_last_task(
+        task_type="organize",
+        summary=f"Organized {res.get('success_count', 0)} files to {Path(target_root).name}",
+        details=res
+    )
+    return res
 
 # ----------------- SESSION STATE & TASK MEMORY -----------------
 

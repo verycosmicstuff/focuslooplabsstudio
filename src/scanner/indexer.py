@@ -12,6 +12,10 @@ from src.config import ALL_MEDIA_EXTS, RAW_EXTS, PHOTO_EXTS, VIDEO_EXTS, SIDECAR
 from src.core.db import get_db, db_transaction
 from src.scanner.sidecar import compute_pair_id, get_base_stem, find_sidecars_for_file
 from src.scanner.meta_extractor import extract_image_meta, extract_video_meta
+from src.scanner.volume import get_or_create_volume_uuid
+from src.core.logger import get_logger
+
+logger = get_logger("indexer")
 
 def compute_fast_hash(file_path: str, file_size: int) -> str:
     """Computes xxhash on head, middle, and tail chunks + file size."""
@@ -61,9 +65,36 @@ class SourceIndexer:
         self.scanned_count = 0
         self.total_size = 0
         self.is_running = True
+        self.is_paused = False
+
+    def pause(self):
+        self.is_paused = True
+        logger.info(f"SourceIndexer for source {self.source_id} paused at {self.scanned_count} files.")
+        if self.progress_cb:
+            self.progress_cb({
+                "source_id": self.source_id,
+                "scanned_count": self.scanned_count,
+                "total_size": self.total_size,
+                "status": "paused",
+                "current_file": "Paused"
+            })
+
+    def resume(self):
+        self.is_paused = False
+        logger.info(f"SourceIndexer for source {self.source_id} resumed.")
+        if self.progress_cb:
+            self.progress_cb({
+                "source_id": self.source_id,
+                "scanned_count": self.scanned_count,
+                "total_size": self.total_size,
+                "status": "scanning",
+                "current_file": "Resuming..."
+            })
 
     def stop(self):
         self.is_running = False
+        self.is_paused = False
+        logger.info(f"SourceIndexer for source {self.source_id} stopped.")
 
     def scan(self):
         start_time = time.time()
@@ -78,6 +109,20 @@ class SourceIndexer:
                     "UPDATE sources SET total_bytes = ?, free_bytes = ?, is_online = 1 WHERE id = ?",
                     (usage.total, usage.free, self.source_id)
                 )
+        except Exception:
+            pass
+
+        # Ensure volume UUID is stamped on storage root and DB
+        try:
+            cursor.execute("SELECT volume_uuid, label FROM sources WHERE id = ?", (self.source_id,))
+            s_info = cursor.fetchone()
+            if s_info:
+                curr_uuid = s_info["volume_uuid"]
+                if not curr_uuid:
+                    vol_uuid = get_or_create_volume_uuid(self.root_path, label=s_info["label"])
+                    if vol_uuid:
+                        with db_transaction() as tx:
+                            tx.execute("UPDATE sources SET volume_uuid = ? WHERE id = ?", (vol_uuid, self.source_id))
         except Exception:
             pass
 
@@ -103,16 +148,25 @@ class SourceIndexer:
                     ext = item["ext"]
                     meta = item.get("meta")
 
-                    tx_cur.execute("SELECT id, size_bytes, mtime FROM files WHERE abs_path = ?", (abs_str,))
+                    # Check first by (source_id, rel_path) for mount path agility, then by abs_path
+                    tx_cur.execute("SELECT id, size_bytes, mtime, abs_path FROM files WHERE source_id = ? AND rel_path = ?", (self.source_id, rel_p))
                     row = tx_cur.fetchone()
+                    if not row:
+                        tx_cur.execute("SELECT id, size_bytes, mtime, abs_path FROM files WHERE abs_path = ?", (abs_str,))
+                        row = tx_cur.fetchone()
 
                     if row:
                         file_id = row["id"]
-                        if row["size_bytes"] != size or abs(row["mtime"] - mtime) > 1.0:
+                        needs_update = (
+                            row["size_bytes"] != size or
+                            abs(row["mtime"] - mtime) > 1.0 or
+                            row["abs_path"] != abs_str
+                        )
+                        if needs_update:
                             tx_cur.execute("""
-                                UPDATE files SET size_bytes = ?, mtime = ?, ctime = ?, fast_hash = ?, pair_id = ?, status = 'active'
+                                UPDATE files SET abs_path = ?, size_bytes = ?, mtime = ?, ctime = ?, fast_hash = ?, pair_id = ?, status = 'active'
                                 WHERE id = ?
-                            """, (size, mtime, ctime, fast_hash, pair_id, file_id))
+                            """, (abs_str, size, mtime, ctime, fast_hash, pair_id, file_id))
                     else:
                         tx_cur.execute("""
                             INSERT INTO files (source_id, rel_path, abs_path, filename, ext, size_bytes, mtime, ctime, media_type, fast_hash, pair_id, status)
@@ -153,6 +207,8 @@ class SourceIndexer:
         system_skips = {"$recycle.bin", "system volume information", ".git", ".idea", ".vscode", "node_modules", ".gemini"}
 
         for root, dirs, files in os.walk(str(self.root_path)):
+            while self.is_paused and self.is_running:
+                time.sleep(0.3)
             if not self.is_running:
                 break
 
@@ -173,11 +229,14 @@ class SourceIndexer:
             dirs[:] = kept_dirs
 
             for fname in files:
+                while self.is_paused and self.is_running:
+                    time.sleep(0.3)
+
                 if not self.is_running:
                     break
 
-                # Ignore system fragments, Windows Recycle Bin files ($I..., $R...), and hidden files
-                if fname.startswith("$") or fname.startswith("._") or fname.startswith("~"):
+                # Ignore system fragments, volume markers, Windows Recycle Bin files ($I..., $R...), and hidden files
+                if fname.startswith("$") or fname.startswith("._") or fname.startswith("~") or fname == ".focusloop_id":
                     continue
                 if "$recycle.bin" in root.lower() or "system volume information" in root.lower():
                     continue
@@ -252,6 +311,11 @@ class SourceIndexer:
                             "current_file": fname,
                             "elapsed_sec": round(time.time() - start_time, 1)
                         })
+
+                if self.scanned_count % 250 == 0:
+                    mb_scanned = round(self.total_size / (1024 * 1024), 1)
+                    elapsed = round(time.time() - start_time, 1)
+                    logger.info(f"Scanning source {self.source_id} ({self.root_path}): {self.scanned_count:,} media files indexed ({mb_scanned:,} MB, {elapsed}s elapsed)")
 
         # Flush any remaining items
         flush_pending()

@@ -21,14 +21,27 @@ from src.config import FFMPEG_PATH, FFPROBE_PATH
 class TestFocusloop(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        init_db()
+        import src.config
+        import src.core.db
+
         cls.test_dir = Path(__file__).resolve().parent / "mock_storage"
         if cls.test_dir.exists():
             shutil.rmtree(cls.test_dir)
         cls.test_dir.mkdir(parents=True, exist_ok=True)
 
+        cls.orig_db_path = src.config.DB_PATH
+        cls.test_db_path = cls.test_dir / "test_focusloop.db"
+        src.config.DB_PATH = cls.test_db_path
+        src.core.db._thread_local.conn = None
+        init_db()
+
     @classmethod
     def tearDownClass(cls):
+        import src.config
+        from src.core.db import close_db
+
+        src.config.DB_PATH = cls.orig_db_path
+        close_db()
         if cls.test_dir.exists():
             shutil.rmtree(cls.test_dir)
 

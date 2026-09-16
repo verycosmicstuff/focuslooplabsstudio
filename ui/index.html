@@ -5,12 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Focusloop Labs — Studio Assistant & Media Manager</title>
   <link rel="stylesheet" href="css/app.css">
+  <link rel="icon" type="image/png" href="icons/app_icon.png">
 </head>
 <body>
   <!-- Sidebar -->
   <aside class="sidebar">
     <div class="brand">
-      <div class="brand-icon">F</div>
+      <div class="brand-icon">
+        <img src="icons/app_icon.png" alt="Focusloop Studio" width="36" height="36">
+      </div>
       <div>
         <div class="brand-title">Focusloop</div>
         <div class="brand-badge">LABS STUDIO</div>
@@ -40,7 +43,7 @@
       </div>
       <div class="nav-item" data-tab="sync">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/><path d="M2.5 22v-6h6M2.66 8.43a10 10 0 0 0 .57 8.38L-2.44 22"/></svg>
-        SSD & NAS Sync
+        Primary & Backup Sync
       </div>
       <div class="nav-item" data-tab="organizer">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
@@ -192,7 +195,7 @@
               <input type="checkbox" id="chk-same-filename" checked> Exact Same Filename Only (Safe)
             </label>
             <label style="font-size: 13px; color:var(--text-muted); display:flex; align-items:center; gap:6px;">
-              <input type="checkbox" id="chk-cross-source"> Cross-Drive Duplicates Only (SSD vs NAS)
+              <input type="checkbox" id="chk-cross-source"> Cross-Drive Duplicates Only (Primary vs Backup)
             </label>
             <div style="display: flex; align-items: center; gap: 6px; margin-left: 6px;">
               <label style="font-size: 12px; color: var(--text-muted);">Grouping:</label>
@@ -366,40 +369,40 @@
         </div>
       </section>
 
-      <!-- 6. SSD & NAS SYNC TAB -->
+      <!-- 6. PRIMARY & BACKUP SYNC TAB -->
       <section id="tab-sync" class="tab-panel">
         <div class="toolbar">
           <div class="toolbar-group">
-            <label style="font-size: 13px; color:var(--text-muted)">Working SSD / Source:</label>
+            <label style="font-size: 13px; color:var(--text-muted)">Primary Working Directory:</label>
             <select id="sel-sync-working" style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:6px 10px; border-radius:6px; font-size:13px;"></select>
 
-            <label style="font-size: 13px; color:var(--text-muted); margin-left:10px;">Backup Drive / NAS:</label>
+            <label style="font-size: 13px; color:var(--text-muted); margin-left:10px;">Backup Directory:</label>
             <select id="sel-sync-backup" style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:6px 10px; border-radius:6px; font-size:13px;"></select>
 
-            <button id="btn-compare-sync" class="btn btn-secondary btn-sm" style="margin-left: 10px;">Compare Drives</button>
+            <button id="btn-compare-sync" class="btn btn-secondary btn-sm" style="margin-left: 10px;">Compare Directories</button>
           </div>
           <div class="toolbar-group">
-            <button id="btn-reclaim-safe-ssd" class="btn btn-primary btn-sm">Reclaim Safe SSD Space</button>
+            <button id="btn-reclaim-safe-ssd" class="btn btn-primary btn-sm">Reclaim Space from Primary Directory</button>
           </div>
         </div>
 
         <div id="sync-summary-card" class="stat-card emerald" style="display:none; margin-bottom: 20px;">
           <div class="stat-label">Verified Safe Reclaimable Space</div>
           <div class="stat-val" id="sync-reclaimable-size">0.0 GB</div>
-          <div class="stat-sub" id="sync-reclaimable-desc">These files exist on your backup drive with matching cryptographic hashes and are 100% safe to delete locally from SSD.</div>
+          <div class="stat-sub" id="sync-reclaimable-desc">These files exist in your Backup Directory with matching cryptographic hashes and are 100% safe to delete from your Primary Working Directory.</div>
         </div>
 
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
           <div>
-            <h4 style="margin-bottom: 10px; font-size: 14px; color:var(--accent-emerald);">Verified Synced (Safe to Free)</h4>
+            <h4 style="margin-bottom: 10px; font-size: 14px; color:var(--accent-emerald);">Verified in Backup (Safe to Reclaim)</h4>
             <div id="synced-safe-list" style="max-height: 400px; overflow-y: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px;">
-              <p style="color:var(--text-muted); font-size:13px;">Select drives and click Compare to analyze sync status.</p>
+              <p style="color:var(--text-muted); font-size:13px;">Select directories and click Compare to analyze sync status.</p>
             </div>
           </div>
           <div>
-            <h4 style="margin-bottom: 10px; font-size: 14px; color:var(--accent-rose);">Unbacked Up (Needs Copy to NAS)</h4>
+            <h4 style="margin-bottom: 10px; font-size: 14px; color:var(--accent-rose);">Unbacked Up (Needs Copy to Backup Directory)</h4>
             <div id="unbacked-up-list" style="max-height: 400px; overflow-y: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px;">
-              <p style="color:var(--text-muted); font-size:13px;">Select drives and click Compare to analyze sync status.</p>
+              <p style="color:var(--text-muted); font-size:13px;">Select directories and click Compare to analyze sync status.</p>
             </div>
           </div>
         </div>
@@ -886,15 +889,15 @@
           </div>
           <div>
             <label style="font-size:13px; color:var(--text-muted); display:block; margin-bottom:6px;">Friendly Label</label>
-            <input type="text" id="modal-source-label" placeholder="e.g. Fast SSD Work or NAS Archive" style="width:100%; background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:8px 12px; border-radius:6px; font-size:13px;">
+            <input type="text" id="modal-source-label" placeholder="e.g. Primary Work or Backup Archive" style="width:100%; background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:8px 12px; border-radius:6px; font-size:13px;">
           </div>
           <div>
-            <label style="font-size:13px; color:var(--text-muted); display:block; margin-bottom:6px;">Drive Type</label>
+            <label style="font-size:13px; color:var(--text-muted); display:block; margin-bottom:6px;">Drive Role / Type</label>
             <select id="modal-source-type" style="width:100%; background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:8px 12px; border-radius:6px; font-size:13px;">
-              <option value="SSD">Fast SSD (Working)</option>
-              <option value="HDD">Local Hard Drive</option>
-              <option value="NAS">Network Storage / NAS (Backup)</option>
-              <option value="CLOUD">Cloud / Google Drive</option>
+              <option value="SSD">⚡ Fast SSD (Primary Working Directory)</option>
+              <option value="HDD">💽 External Drive / HDD (Backup Directory)</option>
+              <option value="NAS">🌐 Network Share / NAS (Backup Directory)</option>
+              <option value="CLOUD">☁️ Cloud / Remote Storage</option>
             </select>
           </div>
         </div>
@@ -902,6 +905,41 @@
       <div class="modal-footer">
         <button class="btn btn-secondary modal-close">Cancel</button>
         <button id="modal-btn-save-source" class="btn btn-primary">Save & Register</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Drive/Folder Label Modal -->
+  <div id="modal-edit-source" class="modal-overlay">
+    <div class="modal-dialog" style="max-width: 480px;">
+      <div class="modal-header">
+        <h3 style="font-size: 16px;">✏️ Edit Drive / Folder Details</h3>
+        <button class="btn btn-secondary btn-sm modal-close">&times;</button>
+      </div>
+      <div class="modal-body" style="display: flex; flex-direction: column; gap: 14px;">
+        <input type="hidden" id="edit-source-id">
+        <div>
+          <label style="font-size:12px; color:var(--text-muted); display:block; margin-bottom:4px;">Path</label>
+          <div id="edit-source-path-display" style="font-family:monospace; font-size:12px; color:#a5b4fc; word-break:break-all; background:rgba(0,0,0,0.3); padding:8px 10px; border-radius:6px; border:1px solid var(--border-color);"></div>
+        </div>
+        <div>
+          <label style="font-size:12px; color:var(--text-muted); display:block; margin-bottom:4px;">Friendly Label</label>
+          <input type="text" id="edit-source-label-input" placeholder="e.g. Primary Work or Backup Archive" style="width:100%; background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:8px 12px; border-radius:6px; font-size:13px;">
+        </div>
+        <div>
+          <label style="font-size:12px; color:var(--text-muted); display:block; margin-bottom:4px;">Drive Role / Type</label>
+          <select id="edit-source-type-select" style="width:100%; background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:8px 12px; border-radius:6px; font-size:13px;">
+            <option value="SSD">⚡ Fast SSD (Primary Working Directory)</option>
+            <option value="HDD">💽 External Drive / HDD (Backup Directory)</option>
+            <option value="NAS">🌐 Network Share / NAS (Backup Directory)</option>
+            <option value="CLOUD">☁️ Cloud / Remote Storage</option>
+            <option value="LOCAL">📁 Local Folder</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary modal-close">Cancel</button>
+        <button id="btn-confirm-save-source-label" class="btn btn-primary">Save Changes</button>
       </div>
     </div>
   </div>

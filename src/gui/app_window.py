@@ -6,6 +6,8 @@ import webview
 from src.config import DEFAULT_PORT, DEFAULT_HOST
 from src.api.server import app
 
+from pathlib import Path
+
 def start_server():
     uvicorn.run(app, host=DEFAULT_HOST, port=DEFAULT_PORT, log_level="warning")
 
@@ -24,6 +26,12 @@ def run_app():
     # Wait briefly for server startup
     time.sleep(1.0)
 
+    # Resolve application icon path for native Windows window & taskbar
+    base_dir = Path(__file__).resolve().parent.parent.parent
+    icon_path = base_dir / "ui" / "icons" / "app_icon.ico"
+    if not icon_path.exists():
+        icon_path = base_dir / "FocusloopLabs.ico"
+
     # Launch PyWebView native Windows desktop window
     url = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
     window = webview.create_window(
@@ -35,7 +43,7 @@ def run_app():
         background_color="#0b0f19",
         text_select=True
     )
-    webview.start(debug=False)
+    webview.start(icon=str(icon_path) if icon_path.exists() else None, debug=False)
 
 if __name__ == "__main__":
     run_app()

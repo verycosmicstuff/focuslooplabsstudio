@@ -1,29 +1,30 @@
 # PROJECT_MAP: Focusloop Labs
 
 ## Stack
-- **Backend**: Python 3.11, FastAPI, SQLite (WAL mode, multi-drive cataloging).
-- **Video & Imaging**: FFmpeg (`hevc_nvenc` RTX 3060 acceleration), OpenCV (Laplacian blur), Pillow, rawpy / exifread (Fuji RAF, XMP sidecars).
-- **Interface**: Standalone Native Desktop App (PyWebView + WebView2), Focusloop Labs studio dashboard (`https://focuslooplabs.vercel.app/`).
+- **Backend**: Python 3.11, FastAPI, SQLite (WAL mode).
+- **Imaging**: FFmpeg (NVENC RTX 3060), OpenCV, Pillow, rawpy / exifread (Fuji RAF, XMP).
+- **UI**: Native Desktop App (PyWebView + WebView2), Focusloop Labs Studio dashboard.
 
 ## Architecture Map
-- `src/core/`: `db.py` (WAL SQLite catalog), `logger.py` (`logs/savespace.log`), `session.py` (state persistence & ignored pairs).
-- `src/scanner/`: `indexer.py` (multi-source crawler, system file/recycle bin exclusion), `meta_extractor.py`, `sidecar.py` (RAW+XMP linking).
-- `src/analyzer/`: `culler.py` (sharpness, burst grouping, intentional keep), `deduper.py` (pair omission, xxhash/SHA-256 clusters).
-- `src/transcoder/`: `engine.py` (batch H.265 NVENC), `handbrake.py` (CLI bridge).
-- `src/organizer/`: `manager.py` (trash, moves, deduplication, sync tracking).
+- `src/core/`: `db.py` (WAL SQLite, volume_uuid & aliases), `logger.py`, `session.py`.
+- `src/scanner/`: `indexer.py` (crawler), `volume.py` (UUID & mount aliasing), `meta_extractor.py`, `sidecar.py`.
+- `src/analyzer/`: `culler.py` (sharpness, burst grouping), `deduper.py` (alias-safe duplicate checks).
+- `src/transcoder/`: `engine.py` (batch H.265 NVENC), `handbrake.py`.
+- `src/organizer/`: `manager.py` (trash, moves, sync tracking).
 - `src/proofing/`: `watermarker.py`, `contact_sheet.py`, `presets.py`.
-- `src/api/server.py`: REST API (culling folders, duplicate pair omission/restoration).
-- `scripts/`: `build_dist.ps1` (portable builder), `build_installer.ps1` (Inno Setup 6), `FocusloopLabs.iss` (installer spec with disclaimer), `compile_launcher.ps1` (C# launcher).
+- `src/api/server.py`: REST API (mounts, culling, transcodes, scan controls).
 - `ui/`: Responsive dark dashboard (`index.html`, `js/app.js`, `css/app.css`).
 
 ## Recent Changes
-- Added cross-platform macOS support: Apple VideoToolbox (`hevc_videotoolbox` with `-tag:v hvc1`) hardware transcoding, Homebrew binary discovery, and Cocoa data/log directory resolution.
-- Added `run_focusloop.sh` POSIX shell launcher and `.github/workflows/build-macos.yml` for automated Apple Silicon (`macos-14`) standalone portable `.app` bundle builds.
-- Added MIT LICENSE, 29/29 unit tests passing.
-- Rebranded to Focusloop Studio with official site `https://focuslooplabs.vercel.app/`.
-- Published v1.0.0 macOS Apple Silicon Portable Release (`FocusloopStudio-macOS-Portable.zip`, 26 MB) alongside Windows Portable Release (`FocusloopLabs-v1.0-Portable.zip`, 192 MB).
-- Updated `studio.html` and `index.html` with dual-download buttons, system specs, and dynamic client-side OS detection.
+- Implemented dynamic volume fingerprinting (`.focusloop_id`) and multi-mount aliasing for USB (`E:\`) and NAS (`\\10.0.0.87\...`) switching without duplicate entries.
+- Replaced terminology with "Primary Working Directory" and "Backup Directory".
+- Added 250-file progress heartbeat logging in `indexer.py`.
+- Designed and integrated new circular Autofocus Reticle icon (`app_icon.png`, `app_icon.ico`).
+- Added drive label/role editing (`PATCH /api/sources/{id}`) and modal with Enter-to-save.
+- Added live Pause, Resume, Cancel controls for indexing (`/api/sources/{id}/pause|resume|cancel`).
+- Persisted live scanning/paused states across refreshes (`GET /api/sources` reports active indexer status; UI maintains Pause/Resume buttons and live polling).
+- All 34/34 unit tests passing.
 
 ## Active Objective
-- Assist user with feature feedback, testing, or future releases (e.g. Linux build / installers).
+- Assist user with testing, workflow refinements, and release packaging.
 

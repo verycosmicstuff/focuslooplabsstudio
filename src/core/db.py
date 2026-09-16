@@ -2,7 +2,7 @@ import sqlite3
 import threading
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from src.config import DB_PATH
+import src.config
 
 from contextlib import contextmanager
 
@@ -11,7 +11,7 @@ db_write_lock = threading.RLock()
 
 def get_db():
     if not hasattr(_thread_local, "conn") or _thread_local.conn is None:
-        conn = sqlite3.connect(str(DB_PATH), check_same_thread=False, timeout=60.0)
+        conn = sqlite3.connect(str(src.config.DB_PATH), check_same_thread=False, timeout=60.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode = WAL;")
         conn.execute("PRAGMA synchronous = NORMAL;")
@@ -19,6 +19,14 @@ def get_db():
         conn.execute("PRAGMA foreign_keys = ON;")
         _thread_local.conn = conn
     return _thread_local.conn
+
+def close_db():
+    if hasattr(_thread_local, "conn") and _thread_local.conn is not None:
+        try:
+            _thread_local.conn.close()
+        except Exception:
+            pass
+        _thread_local.conn = None
 
 @contextmanager
 def db_transaction():
@@ -47,6 +55,8 @@ def init_db():
         free_bytes INTEGER DEFAULT 0,
         is_online BOOLEAN DEFAULT 1,
         excluded_paths TEXT DEFAULT '[]', -- JSON list of excluded/deselected subfolders
+        volume_uuid TEXT,
+        alternate_paths TEXT DEFAULT '[]', -- JSON list of alternate/alias paths (e.g. NAS UNC or local drive letter)
         last_scanned TIMESTAMP
     );
 
@@ -138,11 +148,17 @@ def init_db():
     CREATE INDEX IF NOT EXISTS idx_sync_hash ON sync_records(fast_hash);
     """)
 
-    # Column migration: ensure excluded_paths exists in sources
+    # Column migration: ensure excluded_paths, volume_uuid, and alternate_paths exist in sources
     cursor.execute("PRAGMA table_info(sources)")
     cols = [r["name"] for r in cursor.fetchall()]
     if "excluded_paths" not in cols:
         cursor.execute("ALTER TABLE sources ADD COLUMN excluded_paths TEXT DEFAULT '[]'")
+    if "volume_uuid" not in cols:
+        cursor.execute("ALTER TABLE sources ADD COLUMN volume_uuid TEXT")
+    if "alternate_paths" not in cols:
+        cursor.execute("ALTER TABLE sources ADD COLUMN alternate_paths TEXT DEFAULT '[]'")
+
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sources_volume_uuid ON sources(volume_uuid)")
 
     conn.commit()
 
