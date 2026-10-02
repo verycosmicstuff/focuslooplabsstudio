@@ -77,6 +77,60 @@ def _get_detector(input_size: Tuple[int, int] = (640, 640)) -> cv2.FaceDetectorY
             _thread_local.detector_size = input_size
     return _thread_local.detector
 
+# Clamp OpenCV CPU threads to prevent maxing out CPU cores
+try:
+    cv2.setNumThreads(2)
+except Exception:
+    pass
+
+_gpu_session = None
+_gpu_init_attempted = False
+
+def _get_gpu_session():
+    global _gpu_session, _gpu_init_attempted
+    if _gpu_init_attempted:
+        return _gpu_session
+    _gpu_init_attempted = True
+    try:
+        import torch
+        torch_lib = os.path.join(os.path.dirname(torch.__file__), 'lib')
+        if hasattr(os, 'add_dll_directory') and os.path.isdir(torch_lib):
+            os.add_dll_directory(torch_lib)
+        if torch_lib not in os.environ.get('PATH', ''):
+            os.environ['PATH'] = torch_lib + os.pathsep + os.environ.get('PATH', '')
+
+        import onnxruntime as ort
+        if 'CUDAExecutionProvider' in ort.get_available_providers():
+            so = ort.SessionOptions()
+            so.log_severity_level = 3  # Suppress verbose warnings
+            ensure_models()
+            _gpu_session = ort.InferenceSession(str(SFACE_PATH), so, providers=['CUDAExecutionProvider'])
+            logger.info("Face Engine: NVIDIA GeForce RTX 3060 CUDA GPU acceleration ACTIVATED!")
+    except Exception as e:
+        logger.info(f"Face Engine: Running with CPU fallback ({e})")
+    return _gpu_session
+
+def _extract_feature(aligned_crop: np.ndarray, recognizer: cv2.FaceRecognizerSF) -> np.ndarray:
+    """Extract 128-d face embedding using RTX 3060 CUDA GPU if available, else CPU."""
+    gpu_sess = _get_gpu_session()
+    if gpu_sess is not None:
+        try:
+            blob = cv2.dnn.blobFromImage(aligned_crop, 1.0, (112, 112), (0, 0, 0), swapRB=False, crop=False)
+            outputs = gpu_sess.run(None, {'data': blob})
+            feature = outputs[0]
+            norm = np.linalg.norm(feature)
+            if norm > 0:
+                feature = feature / norm
+            return feature
+        except Exception as e:
+            logger.debug(f"GPU forward pass failed, fallback to CPU: {e}")
+
+    feature = recognizer.feature(aligned_crop)
+    norm = np.linalg.norm(feature)
+    if norm > 0:
+        feature = feature / norm
+    return feature
+
 def _get_recognizer() -> cv2.FaceRecognizerSF:
     """Thread-local instance of SFace recognizer."""
     ensure_models()
@@ -166,11 +220,7 @@ class FaceEngine:
 
             try:
                 aligned = recognizer.alignCrop(bgr, face)
-                feature = recognizer.feature(aligned) # shape (1, 128), float32
-                # L2 normalize just to be absolutely sure
-                norm = np.linalg.norm(feature)
-                if norm > 0:
-                    feature = feature / norm
+                feature = _extract_feature(aligned, recognizer)
                 feat_bytes = feature.astype(np.float32).tobytes()
 
                 # Extract a cropped avatar with 30% margin for nice visual display
@@ -261,10 +311,7 @@ class FaceEngine:
 
                     try:
                         aligned = recognizer.alignCrop(scaled_frame, face)
-                        feature = recognizer.feature(aligned)
-                        norm = np.linalg.norm(feature)
-                        if norm > 0:
-                            feature = feature / norm
+                        feature = _extract_feature(aligned, recognizer)
 
                         # De-duplicate: check if identical face was seen within last 4 seconds
                         is_duplicate = False
@@ -304,6 +351,7 @@ class FaceEngine:
                     except Exception as e:
                         logger.debug(f"Video frame face extraction failed at {t}s: {e}")
 
+            time.sleep(0.002)
             t += step_sec
 
         cap.release()
