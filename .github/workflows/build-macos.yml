@@ -89,12 +89,13 @@ jobs:
           name: FocusloopStudio-macOS-Portable
           path: dist/FocusloopStudio-*-macOS-arm64-Portable.zip
 
-      - name: Attach to GitHub Release (If Tagged)
+      - name: Publish to GitHub Release (If Tagged)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG_NAME="${GITHUB_REF#refs/tags/}"
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            echo "Uploading portable zip to release $TAG_NAME..."
-            gh release upload "$TAG_NAME" dist/FocusloopStudio-*-macOS-arm64-Portable.zip --clobber || true
+            echo "Publishing portable zip to release $TAG_NAME..."
+            gh release view "$TAG_NAME" || gh release create "$TAG_NAME" --title "Focusloop Studio $TAG_NAME" --generate-notes
+            gh release upload "$TAG_NAME" dist/FocusloopStudio-*-macOS-arm64-Portable.zip --clobber
           fi
