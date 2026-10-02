@@ -16,13 +16,14 @@
 - `ui/`: Responsive dark dashboard (`index.html`, `js/app.js`, `css/app.css`).
 
 ## Recent Changes
-- Enhanced Local **People & Faces** engine (Google Photos style):
+- Released **v2.2.1** of Local **People & Faces** engine:
   - SQLite tables `people` & `face_detections` with 128-d vector embeddings and avatar thumbnails.
+  - CUDA GPU acceleration on RTX 3060 (~2.02 ms per face) + CPU thread clamping.
   - Media type filtering (`all`, `video`, `photo`) and sort modes (`video_count`, `photo_count`, `count`, `name`, `recent`).
-  - Targeted single-person search (`find-everywhere`): hunts a specific face across all drives & folders immediately without waiting for library scans.
-  - Live real-time scan updates: clusters faces on-the-fly, displaying newly detected people cards and increments live during scans.
-  - Google Photos-style Naming, Combining/Merging, Unlinking false matches, and auto-syncing with `file_tags` (`speaker`).
+  - Targeted single-person search (`find-everywhere`) across unindexed files and folders.
+  - Live real-time scan updates and on-the-fly clustering.
+  - Fixed thumbnail route pluralization and added picture-in-picture face crop overlay badges with local disk fallback.
 - 52/52 unit tests passing.
 
 ## Active Objective
-- Complete verification of real-time face scanning and targeted searches.
+- Assist user with testing, live workflow verification, and production usage.
