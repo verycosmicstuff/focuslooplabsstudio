@@ -5558,3 +5558,573 @@ function bindInspectorInput(inputId, btnId, category) {
   }
 }
 
+/* ==========================================================================
+   People & Faces Module (Google Photos Style Face Recognition & Grouping)
+   ========================================================================== */
+
+let facesCatalogData = [];
+let selectedPeopleIds = new Set();
+let activeDetailPersonId = null;
+let faceScanPollingInterval = null;
+
+async function loadFacesCatalog() {
+  const sourceSel = document.getElementById('sel-faces-source');
+  const folderSel = document.getElementById('sel-faces-folder');
+  const filterSel = document.getElementById('sel-faces-filter');
+  const sortSel = document.getElementById('sel-faces-sort');
+
+  // Populate source dropdown if needed
+  if (sourceSel && sourceSel.options.length <= 1 && Array.isArray(sourcesData)) {
+    sourcesData.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.id;
+      opt.textContent = `${s.label} (${s.path})`;
+      sourceSel.appendChild(opt);
+    });
+  }
+
+  const sourceId = sourceSel ? sourceSel.value : '';
+  const folder = folderSel ? folderSel.value : '';
+  const filterType = filterSel ? filterSel.value : 'all';
+  const sortBy = sortSel ? sortSel.value : 'count';
+
+  // Check ongoing scan status
+  checkFaceScanStatus();
+
+  try {
+    let url = `${API_BASE}/api/faces/people?filter=${encodeURIComponent(filterType)}&sort=${encodeURIComponent(sortBy)}`;
+    if (sourceId) url += `&source_id=${encodeURIComponent(sourceId)}`;
+    if (folder) url += `&folder=${encodeURIComponent(folder)}`;
+
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Failed to load people catalog');
+    facesCatalogData = await res.json();
+    renderPeopleGrid(facesCatalogData);
+  } catch (err) {
+    console.error('Error loading faces catalog:', err);
+    showToast('Failed to load People catalog: ' + err.message, 'error');
+  }
+}
+
+function renderPeopleGrid(people) {
+  const container = document.getElementById('faces-people-grid');
+  const emptyPlaceholder = document.getElementById('faces-empty-placeholder');
+  if (!container) return;
+
+  container.innerHTML = '';
+  updateMergeToolbar();
+
+  if (!people || people.length === 0) {
+    if (emptyPlaceholder) emptyPlaceholder.style.display = 'block';
+    return;
+  }
+  if (emptyPlaceholder) emptyPlaceholder.style.display = 'none';
+
+  people.forEach(person => {
+    const card = document.createElement('div');
+    card.className = 'person-card' + (selectedPeopleIds.has(person.id) ? ' selected' : '');
+    card.dataset.personId = person.id;
+
+    const isNamed = person.is_named;
+    const avatarUrl = person.avatar_url ? (API_BASE + person.avatar_url) : '';
+    const videoCount = person.video_count || 0;
+    const photoCount = person.photo_count || 0;
+    const appearances = person.face_count || 0;
+
+    let mediaBadgeText = [];
+    if (photoCount > 0) mediaBadgeText.push(`${photoCount} photo${photoCount > 1 ? 's' : ''}`);
+    if (videoCount > 0) mediaBadgeText.push(`${videoCount} video${videoCount > 1 ? 's' : ''}`);
+    const mediaBadgeStr = mediaBadgeText.join(' • ') || `${appearances} appearances`;
+
+    card.innerHTML = `
+      <input type="checkbox" class="person-card-chk" ${selectedPeopleIds.has(person.id) ? 'checked' : ''} title="Select to combine/merge">
+      <div class="person-avatar-wrap">
+        ${avatarUrl ? `<img src="${avatarUrl}" class="person-avatar-img" alt="${escapeHtml(person.name)}">` : `
+          <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" style="color:var(--text-muted); opacity:0.6;">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+          </svg>
+        `}
+      </div>
+      <div class="person-card-name ${isNamed ? '' : 'unnamed'}" title="${escapeHtml(person.name)}">${escapeHtml(person.name)}</div>
+      <div class="person-card-meta">${mediaBadgeStr}</div>
+      <div class="person-card-badge ${isNamed ? 'named' : ''}">${isNamed ? 'Named Person' : 'Unnamed Cluster'}</div>
+    `;
+
+    // Checkbox click (prevent opening modal)
+    const chk = card.querySelector('.person-card-chk');
+    chk.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (chk.checked) {
+        selectedPeopleIds.add(person.id);
+        card.classList.add('selected');
+      } else {
+        selectedPeopleIds.delete(person.id);
+        card.classList.remove('selected');
+      }
+      updateMergeToolbar();
+    });
+
+    // Card click opens person detail
+    card.addEventListener('click', () => {
+      openPersonDetail(person.id);
+    });
+
+    container.appendChild(card);
+  });
+}
+
+function updateMergeToolbar() {
+  const toolbar = document.getElementById('faces-merge-toolbar');
+  const lblCount = document.getElementById('lbl-faces-selected-count');
+  if (!toolbar) return;
+
+  if (selectedPeopleIds.size >= 2) {
+    toolbar.style.display = 'flex';
+    if (lblCount) lblCount.textContent = selectedPeopleIds.size;
+  } else {
+    toolbar.style.display = 'none';
+  }
+}
+
+async function openPersonDetail(personId) {
+  activeDetailPersonId = personId;
+  const modal = document.getElementById('modal-person-detail');
+  if (!modal) return;
+
+  try {
+    const res = await fetch(`${API_BASE}/api/faces/people/${personId}`);
+    if (!res.ok) throw new Error('Person not found');
+    const person = await res.json();
+
+    // Populate header
+    const avatarImg = document.getElementById('person-detail-avatar');
+    if (avatarImg) {
+      if (person.avatar_url) {
+        avatarImg.src = API_BASE + person.avatar_url;
+        avatarImg.style.display = 'block';
+      } else {
+        avatarImg.style.display = 'none';
+      }
+    }
+
+    const nameInput = document.getElementById('txt-person-detail-name');
+    if (nameInput) {
+      nameInput.value = person.name.startsWith('Unnamed Person') ? '' : person.name;
+      nameInput.placeholder = person.name;
+    }
+
+    const statsElem = document.getElementById('person-detail-stats');
+    if (statsElem) {
+      statsElem.textContent = `${person.total_faces} appearances across ${person.total_media} media items`;
+    }
+
+    // Populate merge target selector with all other people
+    const mergeSel = document.getElementById('sel-merge-target');
+    if (mergeSel) {
+      mergeSel.innerHTML = '<option value="">Combine into another person...</option>';
+      facesCatalogData.forEach(p => {
+        if (p.id !== personId) {
+          const opt = document.createElement('option');
+          opt.value = p.id;
+          opt.textContent = `${p.name} (${p.face_count} faces)`;
+          mergeSel.appendChild(opt);
+        }
+      });
+    }
+
+    // Populate media gallery
+    const gallery = document.getElementById('person-media-gallery');
+    if (gallery) {
+      gallery.innerHTML = '';
+      if (!person.media || person.media.length === 0) {
+        gallery.innerHTML = '<p style="color:var(--text-muted); font-size:13px; text-align:center; grid-column:1/-1; padding:40px;">No media found for this person.</p>';
+      } else {
+        person.media.forEach(item => {
+          const card = document.createElement('div');
+          card.className = 'person-media-card';
+
+          const isVideo = item.media_type === 'video';
+          const thumbUrl = `${API_BASE}/api/thumbnails/${item.file_id}`;
+          const faceItem = item.faces && item.faces.length > 0 ? item.faces[0] : null;
+          const timeSec = faceItem ? faceItem.timestamp_sec : 0.0;
+
+          // Format timestamp mm:ss
+          const mins = Math.floor(timeSec / 60);
+          const secs = Math.floor(timeSec % 60);
+          const timecodeStr = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+
+          card.innerHTML = `
+            <div class="person-media-thumb-wrap">
+              <img src="${thumbUrl}" class="person-media-thumb" loading="lazy" alt="${escapeHtml(item.filename)}" onerror="this.src='icons/app_icon.png'">
+              ${isVideo ? `
+                <div class="face-timecode-badge" title="Jump to timestamp in video">
+                  ▶ ${timecodeStr}
+                </div>
+              ` : ''}
+              ${faceItem ? `
+                <button class="face-unlink-btn" title="Not this person? Remove from this group" data-face-id="${faceItem.face_id}">
+                  ✕ Not this person
+                </button>
+              ` : ''}
+            </div>
+            <div style="padding: 10px 12px; display:flex; flex-direction:column; gap:4px;">
+              <div style="font-size:12px; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(item.filename)}">
+                ${escapeHtml(item.filename)}
+              </div>
+              <div style="font-size:11px; color:var(--text-muted); display:flex; justify-content:space-between;">
+                <span>${item.source_label || 'Drive'}</span>
+                <span>${formatBytes(item.size_bytes)}</span>
+              </div>
+              <div style="display:flex; gap:6px; margin-top:6px;">
+                <button class="btn btn-secondary btn-sm btn-play-media" style="flex:1; font-size:10px; padding:3px 6px;">
+                  ${isVideo ? '▶ Play' : '👁️ View'}
+                </button>
+                <button class="btn btn-secondary btn-sm btn-reveal-media" style="font-size:10px; padding:3px 6px;" title="Reveal in File Explorer">
+                  📂
+                </button>
+                ${faceItem ? `
+                  <button class="btn btn-secondary btn-sm btn-set-avatar" style="font-size:10px; padding:3px 6px;" title="Set this face as cover avatar" data-face-id="${faceItem.face_id}">
+                    ⭐
+                  </button>
+                ` : ''}
+              </div>
+            </div>
+          `;
+
+          // Unlink button
+          const btnUnlink = card.querySelector('.face-unlink-btn');
+          if (btnUnlink) {
+            btnUnlink.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              const fId = btnUnlink.dataset.faceId;
+              try {
+                const unres = await fetch(`${API_BASE}/api/faces/faces/${fId}/unlink`, { method: 'POST' });
+                if (unres.ok) {
+                  showToast('Removed appearance from this person', 'success');
+                  card.remove();
+                }
+              } catch (uErr) {
+                showToast('Failed to unlink: ' + uErr.message, 'error');
+              }
+            });
+          }
+
+          // Play / View action
+          const btnPlay = card.querySelector('.btn-play-media');
+          if (btnPlay) {
+            btnPlay.addEventListener('click', (e) => {
+              e.stopPropagation();
+              if (isVideo) {
+                fetch(`${API_BASE}/api/files/open-system`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ file_id: item.file_id })
+                });
+              } else {
+                openPhotoPreview(item.abs_path);
+              }
+            });
+          }
+
+          // Reveal in explorer
+          const btnReveal = card.querySelector('.btn-reveal-media');
+          if (btnReveal) {
+            btnReveal.addEventListener('click', (e) => {
+              e.stopPropagation();
+              openFileLocation(item.abs_path, false);
+            });
+          }
+
+          // Set avatar
+          const btnSetAvatar = card.querySelector('.btn-set-avatar');
+          if (btnSetAvatar) {
+            btnSetAvatar.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              const fId = parseInt(btnSetAvatar.dataset.faceId, 10);
+              try {
+                const avRes = await fetch(`${API_BASE}/api/faces/people/${personId}/avatar`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ face_id: fId })
+                });
+                if (avRes.ok) {
+                  showToast('Updated cover avatar for person', 'success');
+                  if (avatarImg) avatarImg.src = `${API_BASE}/api/faces/thumbnail/${fId}`;
+                }
+              } catch (avErr) {
+                showToast('Failed to set avatar: ' + avErr.message, 'error');
+              }
+            });
+          }
+
+          gallery.appendChild(card);
+        });
+      }
+    }
+
+    modal.classList.add('active');
+  } catch (err) {
+    console.error('Error opening person detail:', err);
+    showToast('Failed to load person details: ' + err.message, 'error');
+  }
+}
+
+async function savePersonName(personId, newName) {
+  newName = (newName || '').trim();
+  if (!newName) {
+    showToast('Please enter a name for this person', 'info');
+    return;
+  }
+
+  try {
+    const res = await fetch(`${API_BASE}/api/faces/people/${personId}/rename`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newName, sync_to_tags: true })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Failed to rename person');
+
+    showToast(`Saved! Named as "${newName}" and synced to Speaker catalog`, 'success');
+    loadFacesCatalog();
+  } catch (err) {
+    showToast('Error saving name: ' + err.message, 'error');
+  }
+}
+
+async function executeCombinePeople(targetId, sourceIds) {
+  if (!targetId || !sourceIds || sourceIds.length === 0) return;
+  try {
+    const res = await fetch(`${API_BASE}/api/faces/people/merge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target_person_id: targetId, source_person_ids: sourceIds })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Failed to merge people');
+
+    showToast(`Successfully combined people! (${data.faces_merged} faces grouped)`, 'success');
+    selectedPeopleIds.clear();
+    loadFacesCatalog();
+
+    const detailModal = document.getElementById('modal-person-detail');
+    if (detailModal && detailModal.classList.contains('active')) {
+      detailModal.classList.remove('active');
+    }
+  } catch (err) {
+    showToast('Error combining people: ' + err.message, 'error');
+  }
+}
+
+async function checkFaceScanStatus() {
+  try {
+    const res = await fetch(`${API_BASE}/api/faces/scan/status`);
+    if (!res.ok) return;
+    const state = await res.json();
+
+    const card = document.getElementById('faces-scan-progress-card');
+    const lblFile = document.getElementById('lbl-faces-scan-file');
+    const lblCounts = document.getElementById('lbl-faces-scan-counts');
+    const bar = document.getElementById('bar-faces-scan-progress');
+
+    if (state.is_running) {
+      if (card) card.style.display = 'block';
+      if (lblFile) lblFile.textContent = state.current_file || 'Scanning...';
+      if (lblCounts) lblCounts.textContent = `${state.scanned_files}/${state.total_files} files • ${state.faces_found} faces found`;
+      if (bar) bar.style.width = `${Math.min(100, state.progress_pct || 0)}%`;
+
+      if (!faceScanPollingInterval) {
+        faceScanPollingInterval = setInterval(checkFaceScanStatus, 1500);
+      }
+    } else {
+      if (card && card.style.display !== 'none') {
+        card.style.display = 'none';
+        if (state.faces_found > 0) {
+          showToast(`Face scan completed! Found ${state.faces_found} faces.`, 'success');
+          loadFacesCatalog();
+        }
+      }
+      if (faceScanPollingInterval) {
+        clearInterval(faceScanPollingInterval);
+        faceScanPollingInterval = null;
+      }
+    }
+  } catch (err) {
+    console.debug('Error checking scan status:', err);
+  }
+}
+
+// Setup Event Listeners for People & Faces
+function setupFacesEventListeners() {
+  // Scope / filter selectors change
+  const selectors = ['sel-faces-source', 'sel-faces-folder', 'sel-faces-filter', 'sel-faces-sort'];
+  selectors.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', () => loadFacesCatalog());
+  });
+
+  // Refresh button
+  const btnRefresh = document.getElementById('btn-refresh-faces');
+  if (btnRefresh) btnRefresh.addEventListener('click', () => loadFacesCatalog());
+
+  // Open scan config modal
+  const btnOpenScan = document.getElementById('btn-open-face-scan');
+  const btnEmptyScan = document.getElementById('btn-empty-start-face-scan');
+  const openScanModal = () => {
+    const modal = document.getElementById('modal-face-scan');
+    const sourceSel = document.getElementById('modal-scan-source');
+    if (sourceSel && sourceSel.options.length <= 1 && Array.isArray(sourcesData)) {
+      sourcesData.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = `${s.label} (${s.path})`;
+        sourceSel.appendChild(opt);
+      });
+    }
+    if (modal) modal.classList.add('active');
+  };
+  if (btnOpenScan) btnOpenScan.addEventListener('click', openScanModal);
+  if (btnEmptyScan) btnEmptyScan.addEventListener('click', openScanModal);
+
+  // Confirm start face scan
+  const btnStartScan = document.getElementById('btn-modal-confirm-start-scan');
+  if (btnStartScan) {
+    btnStartScan.addEventListener('click', async () => {
+      const sourceId = document.getElementById('modal-scan-source')?.value || null;
+      const mediaType = document.getElementById('modal-scan-media-type')?.value || 'all';
+      const stepSec = parseFloat(document.getElementById('modal-scan-step-sec')?.value || '1.5');
+      const forceRescan = document.getElementById('chk-modal-scan-force')?.checked || false;
+
+      document.getElementById('modal-face-scan')?.classList.remove('active');
+
+      try {
+        const res = await fetch(`${API_BASE}/api/faces/scan`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            source_id: sourceId ? parseInt(sourceId, 10) : null,
+            media_type: mediaType,
+            step_sec: stepSec,
+            force_rescan: forceRescan
+          })
+        });
+        const data = await res.json();
+        showToast('Face scan started in background...', 'info');
+        checkFaceScanStatus();
+      } catch (err) {
+        showToast('Failed to start face scan: ' + err.message, 'error');
+      }
+    });
+  }
+
+  // Cancel face scan
+  const btnCancelScan = document.getElementById('btn-cancel-face-scan');
+  if (btnCancelScan) {
+    btnCancelScan.addEventListener('click', async () => {
+      try {
+        await fetch(`${API_BASE}/api/faces/scan/cancel`, { method: 'POST' });
+        showToast('Face scan cancellation requested', 'info');
+      } catch (err) {
+        console.error(err);
+      }
+    });
+  }
+
+  // Auto-Group Unnamed
+  const btnRecluster = document.getElementById('btn-recluster-faces');
+  if (btnRecluster) {
+    btnRecluster.addEventListener('click', async () => {
+      showToast('Grouping unnamed faces...', 'info');
+      try {
+        const res = await fetch(`${API_BASE}/api/faces/recluster`, { method: 'POST' });
+        const data = await res.json();
+        showToast(`Clustering complete! Formed ${data.clusters_formed} groups (${data.faces_grouped} faces).`, 'success');
+        loadFacesCatalog();
+      } catch (err) {
+        showToast('Clustering failed: ' + err.message, 'error');
+      }
+    });
+  }
+
+  // Combine selected from toolbar
+  const btnMergeSelected = document.getElementById('btn-execute-merge-faces');
+  if (btnMergeSelected) {
+    btnMergeSelected.addEventListener('click', () => {
+      const ids = Array.from(selectedPeopleIds);
+      if (ids.length < 2) return;
+      const targetId = ids[0];
+      const sourceIds = ids.slice(1);
+      const targetPerson = facesCatalogData.find(p => p.id === targetId);
+      const targetName = targetPerson ? targetPerson.name : `Person ${targetId}`;
+
+      if (confirm(`Combine these ${ids.length} selected people into "${targetName}"? (All photos and video appearances will be grouped together)`)) {
+        executeCombinePeople(targetId, sourceIds);
+      }
+    });
+  }
+
+  const btnDeselectMerge = document.getElementById('btn-deselect-merge-faces');
+  if (btnDeselectMerge) {
+    btnDeselectMerge.addEventListener('click', () => {
+      selectedPeopleIds.clear();
+      document.querySelectorAll('.person-card.selected').forEach(c => c.classList.remove('selected'));
+      document.querySelectorAll('.person-card-chk:checked').forEach(c => c.checked = false);
+      updateMergeToolbar();
+    });
+  }
+
+  // Save Person Name in detail modal
+  const btnSaveName = document.getElementById('btn-save-person-name');
+  const txtName = document.getElementById('txt-person-detail-name');
+  if (btnSaveName && txtName) {
+    btnSaveName.addEventListener('click', () => {
+      if (activeDetailPersonId) savePersonName(activeDetailPersonId, txtName.value);
+    });
+    txtName.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (activeDetailPersonId) savePersonName(activeDetailPersonId, txtName.value);
+      }
+    });
+  }
+
+  // Detail modal merge button
+  const btnDetailMerge = document.getElementById('btn-detail-merge');
+  const selMergeTarget = document.getElementById('sel-merge-target');
+  if (btnDetailMerge && selMergeTarget) {
+    btnDetailMerge.addEventListener('click', () => {
+      const targetId = parseInt(selMergeTarget.value, 10);
+      if (!targetId || !activeDetailPersonId) {
+        showToast('Please select a target person to combine with', 'info');
+        return;
+      }
+      executeCombinePeople(targetId, [activeDetailPersonId]);
+    });
+  }
+
+  // Delete person button
+  const btnDeletePerson = document.getElementById('btn-delete-person');
+  if (btnDeletePerson) {
+    btnDeletePerson.addEventListener('click', async () => {
+      if (!activeDetailPersonId) return;
+      if (confirm('Delete this person grouping? (Media files and detected faces will remain safe)')) {
+        try {
+          await fetch(`${API_BASE}/api/faces/people/${activeDetailPersonId}`, { method: 'DELETE' });
+          showToast('Person group removed', 'info');
+          document.getElementById('modal-person-detail')?.classList.remove('active');
+          loadFacesCatalog();
+        } catch (err) {
+          showToast('Failed to delete person: ' + err.message, 'error');
+        }
+      }
+    });
+  }
+}
+
+// Initialize People & Faces listeners on page ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', setupFacesEventListeners);
+} else {
+  setupFacesEventListeners();
+}
+

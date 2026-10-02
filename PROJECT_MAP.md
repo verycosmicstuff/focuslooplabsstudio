@@ -16,16 +16,13 @@
 - `ui/`: Responsive dark dashboard (`index.html`, `js/app.js`, `css/app.css`).
 
 ## Recent Changes
-- Fixed macOS release workflow failure (`build-macos.yml`):
-  - Added missing `httpx` dependency to `requirements.txt` and CI workflow for FastAPI `TestClient`.
-  - Updated `TagManager.get_distinct_folders` & `query_catalog` to handle both `/` and `\` cross-platform.
-  - Made `test_tags.py` fixtures use platform-neutral `Path` objects.
-- Fixed Transcoding Pause bug:
-  - Recursive process suspension for FFmpeg and child threads with `psutil`.
-  - Added queue-level pause loop preventing unpause or next-job execution.
-  - DB status updates to `'paused'` with 0 FPS / 0x speed frozen in database and UI.
-  - Synchronized header & queue pause buttons and added amber pause badges.
+- Added 100% Local **People & Faces** engine (Google Photos style):
+  - SQLite tables `people` & `face_detections` with 128-d vector embeddings and avatar thumbnails.
+  - Backend `FaceEngine` using OpenCV YuNet (detection) and SFace (embeddings) with video keyframe sampling and temporal de-duplication.
+  - Agglomerative cosine clustering for auto-grouping unnamed faces into People.
+  - Google Photos-style Naming, Combining/Merging, Unlinking false matches, and auto-syncing with `file_tags` (`speaker`).
+  - Frontend "People & Faces" tab with live scan progress bar, people cards grid, multi-select merge toolbar, and detail media gallery with video timestamp badges (`▶ 01:24`).
 - 50/50 unit tests passing.
 
 ## Active Objective
-- Package and trigger updated macOS and Windows builds.
+- Assist user with testing, workflow refinements, and release packaging.
