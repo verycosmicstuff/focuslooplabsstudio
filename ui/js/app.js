@@ -5567,11 +5567,15 @@ let selectedPeopleIds = new Set();
 let activeDetailPersonId = null;
 let faceScanPollingInterval = null;
 
-async function loadFacesCatalog() {
+let lastFacesFoundCount = -1;
+let lastFaceScanPollTime = 0;
+
+async function loadFacesCatalog(isSilent = false) {
   const sourceSel = document.getElementById('sel-faces-source');
   const folderSel = document.getElementById('sel-faces-folder');
   const filterSel = document.getElementById('sel-faces-filter');
   const sortSel = document.getElementById('sel-faces-sort');
+  const mediaTypeSel = document.getElementById('sel-faces-media-type');
 
   // Populate source dropdown if needed
   if (sourceSel && sourceSel.options.length <= 1 && Array.isArray(sourcesData)) {
@@ -5587,12 +5591,15 @@ async function loadFacesCatalog() {
   const folder = folderSel ? folderSel.value : '';
   const filterType = filterSel ? filterSel.value : 'all';
   const sortBy = sortSel ? sortSel.value : 'count';
+  const mediaType = mediaTypeSel ? mediaTypeSel.value : 'all';
 
   // Check ongoing scan status
-  checkFaceScanStatus();
+  if (!isSilent) {
+    checkFaceScanStatus();
+  }
 
   try {
-    let url = `${API_BASE}/api/faces/people?filter=${encodeURIComponent(filterType)}&sort=${encodeURIComponent(sortBy)}`;
+    let url = `${API_BASE}/api/faces/people?filter=${encodeURIComponent(filterType)}&sort=${encodeURIComponent(sortBy)}&media_type=${encodeURIComponent(mediaType)}`;
     if (sourceId) url += `&source_id=${encodeURIComponent(sourceId)}`;
     if (folder) url += `&folder=${encodeURIComponent(folder)}`;
 
@@ -5602,7 +5609,7 @@ async function loadFacesCatalog() {
     renderPeopleGrid(facesCatalogData);
   } catch (err) {
     console.error('Error loading faces catalog:', err);
-    showToast('Failed to load People catalog: ' + err.message, 'error');
+    if (!isSilent) showToast('Failed to load People catalog: ' + err.message, 'error');
   }
 }
 
@@ -5648,6 +5655,9 @@ function renderPeopleGrid(people) {
       <div class="person-card-name ${isNamed ? '' : 'unnamed'}" title="${escapeHtml(person.name)}">${escapeHtml(person.name)}</div>
       <div class="person-card-meta">${mediaBadgeStr}</div>
       <div class="person-card-badge ${isNamed ? 'named' : ''}">${isNamed ? 'Named Person' : 'Unnamed Cluster'}</div>
+      <button class="btn-target-find" title="Search all drives and folders immediately for this face" data-person-id="${person.id}">
+        🎯 Find in All Folders
+      </button>
     `;
 
     // Checkbox click (prevent opening modal)
@@ -5663,6 +5673,15 @@ function renderPeopleGrid(people) {
       }
       updateMergeToolbar();
     });
+
+    // Targeted hunt button click
+    const btnTarget = card.querySelector('.btn-target-find');
+    if (btnTarget) {
+      btnTarget.addEventListener('click', (e) => {
+        e.stopPropagation();
+        startTargetScan(person.id, person.name);
+      });
+    }
 
     // Card click opens person detail
     card.addEventListener('click', () => {
@@ -5916,6 +5935,149 @@ async function executeCombinePeople(targetId, sourceIds) {
   }
 }
 
+async function startTargetScan(personId, personName) {
+  if (!personId) return;
+  try {
+    showToast(`Hunting for "${personName}" across all folders...`, 'info');
+    const res = await fetch(`${API_BASE}/api/faces/people/${personId}/find-everywhere`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ step_sec: 1.5, force_rescan: false })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Failed to start targeted search');
+
+    showToast(`Targeted hunt active for "${personName}"! Matches will appear live.`, 'success');
+    checkFaceScanStatus();
+  } catch (err) {
+    showToast('Failed to start targeted search: ' + err.message, 'error');
+  }
+}
+
+async function refreshActivePersonDetailMedia(personId) {
+  if (!personId) return;
+  try {
+    const res = await fetch(`${API_BASE}/api/faces/people/${personId}`);
+    if (!res.ok) return;
+    const person = await res.json();
+
+    const statsElem = document.getElementById('person-detail-stats');
+    if (statsElem) {
+      statsElem.textContent = `${person.total_faces} appearances across ${person.total_media} media items`;
+    }
+
+    const gallery = document.getElementById('person-media-gallery');
+    if (gallery && person.media) {
+      const currentCardsCount = gallery.querySelectorAll('.person-media-card').length;
+      if (person.media.length !== currentCardsCount) {
+        gallery.innerHTML = '';
+        person.media.forEach(item => {
+          const card = document.createElement('div');
+          card.className = 'person-media-card';
+          const isVideo = item.media_type === 'video';
+          const thumbUrl = `${API_BASE}/api/thumbnails/${item.file_id}`;
+          const faceItem = item.faces && item.faces.length > 0 ? item.faces[0] : null;
+          const timeSec = faceItem ? faceItem.timestamp_sec : 0.0;
+          const mins = Math.floor(timeSec / 60);
+          const secs = Math.floor(timeSec % 60);
+          const timecodeStr = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+
+          card.innerHTML = `
+            <div class="person-media-thumb-wrap">
+              <img src="${thumbUrl}" class="person-media-thumb" loading="lazy" alt="${escapeHtml(item.filename)}" onerror="this.src='icons/app_icon.png'">
+              ${isVideo ? `<div class="face-timecode-badge" title="Jump to timestamp in video">▶ ${timecodeStr}</div>` : ''}
+              ${faceItem ? `<button class="face-unlink-btn" title="Not this person? Remove from this group" data-face-id="${faceItem.face_id}">✕ Not this person</button>` : ''}
+            </div>
+            <div style="padding: 10px 12px; display:flex; flex-direction:column; gap:4px;">
+              <div style="font-size:12px; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(item.filename)}">
+                ${escapeHtml(item.filename)}
+              </div>
+              <div style="font-size:11px; color:var(--text-muted); display:flex; justify-content:space-between;">
+                <span>${item.source_label || 'Drive'}</span>
+                <span>${formatBytes(item.size_bytes)}</span>
+              </div>
+              <div style="display:flex; gap:6px; margin-top:6px;">
+                <button class="btn btn-secondary btn-sm btn-play-media" style="flex:1; font-size:10px; padding:3px 6px;">
+                  ${isVideo ? '▶ Play' : '👁️ View'}
+                </button>
+                <button class="btn btn-secondary btn-sm btn-reveal-media" style="font-size:10px; padding:3px 6px;" title="Reveal in File Explorer">📂</button>
+                ${faceItem ? `<button class="btn btn-secondary btn-sm btn-set-avatar" style="font-size:10px; padding:3px 6px;" title="Set this face as cover avatar" data-face-id="${faceItem.face_id}">⭐</button>` : ''}
+              </div>
+            </div>
+          `;
+
+          const btnUnlink = card.querySelector('.face-unlink-btn');
+          if (btnUnlink) {
+            btnUnlink.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              const fId = btnUnlink.dataset.faceId;
+              try {
+                const unres = await fetch(`${API_BASE}/api/faces/faces/${fId}/unlink`, { method: 'POST' });
+                if (unres.ok) {
+                  showToast('Removed appearance from this person', 'success');
+                  card.remove();
+                }
+              } catch (uErr) {
+                showToast('Failed to unlink: ' + uErr.message, 'error');
+              }
+            });
+          }
+
+          const btnPlay = card.querySelector('.btn-play-media');
+          if (btnPlay) {
+            btnPlay.addEventListener('click', (e) => {
+              e.stopPropagation();
+              if (isVideo) {
+                fetch(`${API_BASE}/api/files/open-system`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ file_id: item.file_id })
+                });
+              } else {
+                openPhotoPreview(item.abs_path);
+              }
+            });
+          }
+
+          const btnReveal = card.querySelector('.btn-reveal-media');
+          if (btnReveal) {
+            btnReveal.addEventListener('click', (e) => {
+              e.stopPropagation();
+              openFileLocation(item.abs_path, false);
+            });
+          }
+
+          const btnSetAvatar = card.querySelector('.btn-set-avatar');
+          if (btnSetAvatar) {
+            btnSetAvatar.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              const fId = parseInt(btnSetAvatar.dataset.faceId, 10);
+              try {
+                const avRes = await fetch(`${API_BASE}/api/faces/people/${personId}/avatar`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ face_id: fId })
+                });
+                if (avRes.ok) {
+                  showToast('Updated cover avatar for person', 'success');
+                  const avatarImg = document.getElementById('person-detail-avatar');
+                  if (avatarImg) avatarImg.src = `${API_BASE}/api/faces/thumbnail/${fId}`;
+                }
+              } catch (avErr) {
+                showToast('Failed to set avatar: ' + avErr.message, 'error');
+              }
+            });
+          }
+
+          gallery.appendChild(card);
+        });
+      }
+    }
+  } catch (err) {
+    console.debug('Error refreshing person media:', err);
+  }
+}
+
 async function checkFaceScanStatus() {
   try {
     const res = await fetch(`${API_BASE}/api/faces/scan/status`);
@@ -5923,15 +6085,44 @@ async function checkFaceScanStatus() {
     const state = await res.json();
 
     const card = document.getElementById('faces-scan-progress-card');
+    const lblTitle = document.getElementById('lbl-faces-scan-title');
     const lblFile = document.getElementById('lbl-faces-scan-file');
     const lblCounts = document.getElementById('lbl-faces-scan-counts');
     const bar = document.getElementById('bar-faces-scan-progress');
 
     if (state.is_running) {
       if (card) card.style.display = 'block';
-      if (lblFile) lblFile.textContent = state.current_file || 'Scanning...';
-      if (lblCounts) lblCounts.textContent = `${state.scanned_files}/${state.total_files} files • ${state.faces_found} faces found`;
+
+      if (state.is_targeted) {
+        if (lblTitle) lblTitle.textContent = `🎯 Hunting for "${state.target_person_name || 'Person'}" in All Folders`;
+        if (lblFile) lblFile.textContent = state.current_file || 'Searching folders...';
+        if (lblCounts) lblCounts.textContent = `${state.scanned_files}/${state.total_files} files • ${state.matches_found || 0} matches found!`;
+      } else {
+        if (lblTitle) lblTitle.textContent = 'Face Detection Active';
+        if (lblFile) lblFile.textContent = state.current_file || 'Scanning...';
+        if (lblCounts) lblCounts.textContent = `${state.scanned_files}/${state.total_files} files • ${state.faces_found} faces found`;
+      }
+
       if (bar) bar.style.width = `${Math.min(100, state.progress_pct || 0)}%`;
+
+      // LIVE REAL-TIME UPDATES:
+      // While scanning is running, update people grid live so scanned photos & faces appear immediately!
+      const now = Date.now();
+      const sightingCount = state.is_targeted ? (state.matches_found || 0) : (state.faces_found || 0);
+      const hasNewSightings = (sightingCount !== lastFacesFoundCount);
+      const shouldPeriodicRefresh = (now - lastFaceScanPollTime > 3000);
+
+      if (currentTab === 'faces' && (hasNewSightings || shouldPeriodicRefresh)) {
+        lastFacesFoundCount = sightingCount;
+        lastFaceScanPollTime = now;
+        loadFacesCatalog(true); // silent refresh without toast flashes
+
+        // Also refresh person detail gallery if open
+        const detailModal = document.getElementById('modal-person-detail');
+        if (detailModal && detailModal.classList.contains('active') && activeDetailPersonId) {
+          refreshActivePersonDetailMedia(activeDetailPersonId);
+        }
+      }
 
       if (!faceScanPollingInterval) {
         faceScanPollingInterval = setInterval(checkFaceScanStatus, 1500);
@@ -5939,10 +6130,12 @@ async function checkFaceScanStatus() {
     } else {
       if (card && card.style.display !== 'none') {
         card.style.display = 'none';
-        if (state.faces_found > 0) {
+        if (state.is_targeted) {
+          showToast(`Targeted hunt complete! Found ${state.matches_found || 0} appearances for ${state.target_person_name || 'person'}.`, 'success');
+        } else if (state.faces_found > 0) {
           showToast(`Face scan completed! Found ${state.faces_found} faces.`, 'success');
-          loadFacesCatalog();
         }
+        loadFacesCatalog();
       }
       if (faceScanPollingInterval) {
         clearInterval(faceScanPollingInterval);
@@ -5957,11 +6150,22 @@ async function checkFaceScanStatus() {
 // Setup Event Listeners for People & Faces
 function setupFacesEventListeners() {
   // Scope / filter selectors change
-  const selectors = ['sel-faces-source', 'sel-faces-folder', 'sel-faces-filter', 'sel-faces-sort'];
+  const selectors = ['sel-faces-source', 'sel-faces-folder', 'sel-faces-filter', 'sel-faces-sort', 'sel-faces-media-type'];
   selectors.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', () => loadFacesCatalog());
   });
+
+  // Targeted hunt button in person detail modal
+  const btnFindEverywhere = document.getElementById('btn-person-find-everywhere');
+  if (btnFindEverywhere) {
+    btnFindEverywhere.addEventListener('click', () => {
+      if (activeDetailPersonId) {
+        const personName = document.getElementById('txt-person-detail-name')?.value || `Person ${activeDetailPersonId}`;
+        startTargetScan(activeDetailPersonId, personName);
+      }
+    });
+  }
 
   // Refresh button
   const btnRefresh = document.getElementById('btn-refresh-faces');

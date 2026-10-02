@@ -1026,6 +1026,16 @@
                 <option value="unnamed">❓ Unnamed / New Groups</option>
               </select>
             </div>
+
+            <!-- Media Type Filter -->
+            <div style="display: flex; align-items: center; gap: 5px;">
+              <label style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Media:</label>
+              <select id="sel-faces-media-type" style="background: var(--bg-card); color: #fff; border: 1px solid var(--border-color); padding: 5px 8px; border-radius: 6px; font-size: 12px;">
+                <option value="all">🎬 All Media</option>
+                <option value="video">🎥 Videos Only</option>
+                <option value="photo">📷 Photos Only</option>
+              </select>
+            </div>
           </div>
 
           <div class="toolbar-group" style="flex-wrap: wrap; gap: 8px; align-items: center;">
@@ -1034,6 +1044,8 @@
               <label style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Sort:</label>
               <select id="sel-faces-sort" style="background: var(--bg-card); color: #fff; border: 1px solid var(--border-color); padding: 5px 8px; border-radius: 6px; font-size: 12px;">
                 <option value="count">Most Appearances (Google Photos style)</option>
+                <option value="video_count">🎥 Most Videos (Top Video Appearances)</option>
+                <option value="photo_count">📷 Most Photos (Top Photo Appearances)</option>
                 <option value="name">Name (A → Z)</option>
                 <option value="recent">Recently Added</option>
               </select>
@@ -1057,7 +1069,7 @@
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
             <div style="display: flex; align-items: center; gap: 8px;">
               <span class="spinner" style="width: 14px; height: 14px; border-width: 2px;"></span>
-              <strong style="color: var(--accent-cyan); font-size: 13px;">Face Detection Active</strong>
+              <strong id="lbl-faces-scan-title" style="color: var(--accent-cyan); font-size: 13px;">Face Detection Active</strong>
               <span id="lbl-faces-scan-file" style="font-size: 12px; color: var(--text-muted); max-width: 400px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Scanning...</span>
             </div>
             <div style="display: flex; align-items: center; gap: 12px;">
@@ -1708,6 +1720,10 @@
         </div>
 
         <div style="display: flex; align-items: center; gap: 8px;">
+          <!-- Targeted hunt across all folders -->
+          <button id="btn-person-find-everywhere" class="btn btn-primary btn-sm" style="padding: 5px 12px; font-size: 12px; background: linear-gradient(135deg, #06b6d4, #3b82f6); border: none; font-weight: 600;" title="Search all drives and folders immediately for this face without waiting for full scan">
+            🎯 Find in All Folders
+          </button>
           <!-- Merge dropdown -->
           <div style="display: flex; align-items: center; gap: 5px;">
             <select id="sel-merge-target" style="background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 5px 8px; border-radius: 6px; font-size: 12px; max-width: 180px;">

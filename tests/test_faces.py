@@ -295,6 +295,108 @@ class TestFaceEngineAndCatalog(unittest.TestCase):
         cancel_resp = self.client.post("/api/faces/scan/cancel")
         self.assertEqual(cancel_resp.status_code, 200)
 
+    def test_09_media_type_filter_and_sorting(self):
+        """Test filtering by media_type (video vs photo) and sorting by video_count / photo_count."""
+        conn = get_db()
+        cursor = conn.cursor()
+
+        # Person 1: Appears in 2 videos (file 3)
+        cursor.execute("INSERT INTO people (id, name) VALUES (101, 'Video Star')")
+        cursor.execute("""
+            INSERT INTO face_detections (id, file_id, person_id, timestamp_sec, box_x, box_y, box_w, box_h, confidence, embedding)
+            VALUES (101, 3, 101, 1.0, 10, 10, 50, 50, 0.9, ?)
+        """, (self._generate_synthetic_embedding(101),))
+        cursor.execute("""
+            INSERT INTO face_detections (id, file_id, person_id, timestamp_sec, box_x, box_y, box_w, box_h, confidence, embedding)
+            VALUES (102, 3, 101, 3.5, 10, 10, 50, 50, 0.9, ?)
+        """, (self._generate_synthetic_embedding(102),))
+
+        # Person 2: Appears in 2 photos (file 1, file 2)
+        cursor.execute("INSERT INTO people (id, name) VALUES (102, 'Photo Model')")
+        cursor.execute("""
+            INSERT INTO face_detections (id, file_id, person_id, timestamp_sec, box_x, box_y, box_w, box_h, confidence, embedding)
+            VALUES (103, 1, 102, 0.0, 10, 10, 50, 50, 0.9, ?)
+        """, (self._generate_synthetic_embedding(103),))
+        cursor.execute("""
+            INSERT INTO face_detections (id, file_id, person_id, timestamp_sec, box_x, box_y, box_w, box_h, confidence, embedding)
+            VALUES (104, 2, 102, 0.0, 10, 10, 50, 50, 0.9, ?)
+        """, (self._generate_synthetic_embedding(104),))
+        conn.commit()
+
+        # 1. Filter media_type = video
+        resp_video = self.client.get("/api/faces/people?media_type=video")
+        self.assertEqual(resp_video.status_code, 200)
+        video_people = resp_video.json()
+        self.assertTrue(any(p["id"] == 101 for p in video_people))
+        self.assertFalse(any(p["id"] == 102 for p in video_people))
+
+        # 2. Filter media_type = photo
+        resp_photo = self.client.get("/api/faces/people?media_type=photo")
+        self.assertEqual(resp_photo.status_code, 200)
+        photo_people = resp_photo.json()
+        self.assertTrue(any(p["id"] == 102 for p in photo_people))
+        self.assertFalse(any(p["id"] == 101 for p in photo_people))
+
+        # 3. Sort by video_count
+        resp_sort_video = self.client.get("/api/faces/people?sort=video_count")
+        self.assertEqual(resp_sort_video.status_code, 200)
+        sorted_v = resp_sort_video.json()
+        self.assertEqual(sorted_v[0]["id"], 101) # Video Star at top
+
+        # 4. Sort by photo_count
+        resp_sort_photo = self.client.get("/api/faces/people?sort=photo_count")
+        self.assertEqual(resp_sort_photo.status_code, 200)
+        sorted_p = resp_sort_photo.json()
+        self.assertEqual(sorted_p[0]["id"], 102) # Photo Model at top
+
+    def test_10_targeted_face_scan_find_everywhere(self):
+        """Test targeted face scan across unassigned faces and media."""
+        conn = get_db()
+        cursor = conn.cursor()
+
+        # Create target person with known vector
+        target_vec = (np.ones(128, dtype=np.float32) / np.sqrt(128)).astype(np.float32)
+        emb_target = target_vec.tobytes()
+
+        cursor.execute("INSERT INTO people (id, name) VALUES (201, 'Target Agent')")
+        cursor.execute("""
+            INSERT INTO face_detections (id, file_id, person_id, timestamp_sec, box_x, box_y, box_w, box_h, confidence, embedding)
+            VALUES (201, 1, 201, 0.0, 10, 10, 50, 50, 0.95, ?)
+        """, (emb_target,))
+
+        # Create an unassigned face with matching vector (cosine sim = 1.0)
+        cursor.execute("""
+            INSERT INTO face_detections (id, file_id, person_id, timestamp_sec, box_x, box_y, box_w, box_h, confidence, embedding)
+            VALUES (202, 2, NULL, 0.0, 15, 15, 45, 45, 0.92, ?)
+        """, (emb_target,))
+        conn.commit()
+
+        # Launch targeted hunt
+        resp = self.client.post("/api/faces/people/201/find-everywhere", json={"step_sec": 1.5})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["status"], "started")
+        self.assertEqual(data["target_person_id"], 201)
+
+        # Wait briefly for worker sweep
+        import time
+        for _ in range(20):
+            status = face_engine.scan_state
+            if not status["is_running"]:
+                break
+            time.sleep(0.05)
+
+        # The unassigned face (202) should now be linked to Person 201!
+        cursor.execute("SELECT person_id FROM face_detections WHERE id = 202")
+        self.assertEqual(cursor.fetchone()[0], 201)
+
+        # File 2 should be tagged with 'Target Agent' as speaker
+        cursor.execute("SELECT tag FROM file_tags WHERE file_id = 2 AND category = 'speaker'")
+        tag_row = cursor.fetchone()
+        self.assertIsNotNone(tag_row)
+        self.assertEqual(tag_row[0], "Target Agent")
+
 
 if __name__ == "__main__":
     unittest.main()
+

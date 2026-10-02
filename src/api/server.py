@@ -1710,14 +1710,32 @@ def api_list_people(
     source_id: Optional[int] = None,
     folder: Optional[str] = None,
     filter: str = "all",
-    sort: str = "count"
+    sort: str = "count",
+    media_type: str = "all"
 ):
     return face_engine.list_people(
         source_id=source_id,
         folder_filter=folder,
         filter_type=filter,
-        sort_by=sort
+        sort_by=sort,
+        media_type=media_type
     )
+
+@app.post("/api/faces/people/{person_id}/find-everywhere")
+def api_find_person_everywhere(person_id: int, payload: Optional[Dict[str, Any]] = None):
+    step_sec = 1.5
+    force_rescan = False
+    if payload:
+        step_sec = float(payload.get("step_sec", 1.5))
+        force_rescan = bool(payload.get("force_rescan", False))
+    try:
+        return face_engine.start_target_scan(
+            person_id=person_id,
+            step_sec=step_sec,
+            force_rescan=force_rescan
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/faces/people/{person_id}")
 def api_get_person(person_id: int):

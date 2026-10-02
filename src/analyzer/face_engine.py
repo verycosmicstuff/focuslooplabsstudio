@@ -176,6 +176,10 @@ class FaceEngine:
         self._cancel_scan_event = threading.Event()
         self.scan_state: Dict[str, Any] = {
             "is_running": False,
+            "is_targeted": False,
+            "target_person_id": None,
+            "target_person_name": None,
+            "matches_found": 0,
             "total_files": 0,
             "scanned_files": 0,
             "faces_found": 0,
@@ -361,10 +365,18 @@ class FaceEngine:
     # File Processing & Database Storage
     # -------------------------------------------------------------
 
-    def process_file_faces(self, file_id: int, file_path: Path, media_type: str, step_sec: float = 1.5) -> int:
+    def process_file_faces(
+        self,
+        file_id: int,
+        file_path: Path,
+        media_type: str,
+        step_sec: float = 1.5,
+        known_people_cache: Optional[Dict[int, Dict[str, Any]]] = None
+    ) -> int:
         """
         Detects faces in a file, stores them in database, saves crops,
-        and matches against known people. Returns number of faces found.
+        and matches against known people (or creates new person clusters on the fly).
+        Returns number of faces found.
         """
         if media_type == "video":
             detections = self.detect_and_embed_video(file_path, step_sec=step_sec)
@@ -375,7 +387,10 @@ class FaceEngine:
             return 0
 
         # Load active people and their average embeddings for fast matching
-        known_people = self._get_known_people_centroids()
+        if known_people_cache is None:
+            known_people = self._get_known_people_centroids()
+        else:
+            known_people = known_people_cache
 
         faces_stored = 0
         with db_transaction() as conn:
@@ -385,7 +400,7 @@ class FaceEngine:
                 emb_bytes = det["embedding"]
                 feat_vec = np.frombuffer(emb_bytes, dtype=np.float32)
 
-                # Match against known named people first
+                # Match against known people
                 best_person_id = None
                 best_sim = -1.0
 
@@ -394,6 +409,29 @@ class FaceEngine:
                     if sim > best_sim and sim >= SIMILARITY_MATCH_THRESHOLD:
                         best_sim = sim
                         best_person_id = p_id
+
+                # If no existing cluster matched, create a new person IMMEDIATELY on the fly
+                if best_person_id is None:
+                    cursor.execute("SELECT COUNT(*) FROM people WHERE name LIKE 'Unnamed Person%'")
+                    unnamed_num = cursor.fetchone()[0] + 1
+                    new_name = f"Unnamed Person {unnamed_num}"
+                    cursor.execute("INSERT INTO people (name) VALUES (?)", (new_name,))
+                    best_person_id = cursor.lastrowid
+                    known_people[best_person_id] = {
+                        "name": new_name,
+                        "centroid": feat_vec,
+                        "count": 1
+                    }
+                else:
+                    # Update running average centroid
+                    c = known_people[best_person_id]["centroid"]
+                    cnt = known_people[best_person_id]["count"]
+                    new_c = (c * cnt + feat_vec) / (cnt + 1)
+                    norm = np.linalg.norm(new_c)
+                    if norm > 0:
+                        new_c = new_c / norm
+                    known_people[best_person_id]["centroid"] = new_c
+                    known_people[best_person_id]["count"] += 1
 
                 bx, by, bw, bh = det["box"]
                 cursor.execute("""
@@ -418,7 +456,6 @@ class FaceEngine:
                     crop_filename = f"{face_id}.jpg"
                     crop_full_path = FACES_DIR / crop_filename
                     try:
-                        # Resize crop to standard avatar dimension (e.g. 200x200 max)
                         ch, cw = crop_img.shape[:2]
                         if max(cw, ch) > 240:
                             sc = 240.0 / max(cw, ch)
@@ -428,12 +465,19 @@ class FaceEngine:
                     except Exception as e:
                         logger.warning(f"Could not save face crop {crop_full_path}: {e}")
 
-                # If matched to a person and person doesn't have an avatar yet, assign this face
-                if best_person_id:
+                # If person doesn't have an avatar yet, set this face as avatar
+                cursor.execute("""
+                    UPDATE people SET avatar_face_id = ?
+                    WHERE id = ? AND (avatar_face_id IS NULL OR avatar_face_id = 0)
+                """, (face_id, best_person_id))
+
+                # If person is named (not 'Unnamed Person...'), auto-tag the file as speaker
+                p_name = known_people[best_person_id]["name"]
+                if not p_name.startswith("Unnamed Person"):
                     cursor.execute("""
-                        UPDATE people SET avatar_face_id = ?
-                        WHERE id = ? AND (avatar_face_id IS NULL OR avatar_face_id = 0)
-                    """, (face_id, best_person_id))
+                        INSERT OR IGNORE INTO file_tags (file_id, tag, category)
+                        VALUES (?, ?, 'speaker')
+                    """, (file_id, p_name))
 
                 faces_stored += 1
 
@@ -773,11 +817,12 @@ class FaceEngine:
         source_id: Optional[int] = None,
         folder_filter: Optional[str] = None,
         filter_type: str = "all", # "all", "named", "unnamed"
-        sort_by: str = "count"    # "count", "name", "recent"
+        sort_by: str = "count",   # "count", "name", "recent", "video_count", "photo_count"
+        media_type: str = "all"   # "all", "video", "photo"
     ) -> List[Dict[str, Any]]:
         """
         List all people with counts, avatar thumbnail URL, and media stats.
-        Optionally scoped by drive (source_id) or folder.
+        Optionally scoped by drive (source_id), folder, and media type.
         """
         conn = get_db()
         cursor = conn.cursor()
@@ -831,6 +876,12 @@ class FaceEngine:
             if filter_type == "unnamed" and is_named:
                 continue
 
+            # Media type filtering
+            if media_type == "video" and (r["video_count"] or 0) == 0:
+                continue
+            if media_type == "photo" and (r["photo_count"] or 0) == 0:
+                continue
+
             avatar_thumb = r["avatar_thumbnail"]
             avatar_url = f"/api/faces/thumbnail/{r['avatar_face_id']}" if avatar_thumb else None
 
@@ -853,6 +904,10 @@ class FaceEngine:
             results.sort(key=lambda x: (not x["is_named"], x["name"].lower()))
         elif sort_by == "recent":
             results.sort(key=lambda x: x["updated_at"] or "", reverse=True)
+        elif sort_by == "video_count":
+            results.sort(key=lambda x: (x["video_count"], x["face_count"]), reverse=True)
+        elif sort_by == "photo_count":
+            results.sort(key=lambda x: (x["photo_count"], x["face_count"]), reverse=True)
         else: # "count" (default Google Photos style: most frequent first)
             results.sort(key=lambda x: x["face_count"], reverse=True)
 
@@ -954,6 +1009,10 @@ class FaceEngine:
 
             self._cancel_scan_event.clear()
             self.scan_state["is_running"] = True
+            self.scan_state["is_targeted"] = False
+            self.scan_state["target_person_id"] = None
+            self.scan_state["target_person_name"] = None
+            self.scan_state["matches_found"] = 0
             self.scan_state["scanned_files"] = 0
             self.scan_state["faces_found"] = 0
             self.scan_state["current_file"] = "Initializing..."
@@ -969,6 +1028,58 @@ class FaceEngine:
             t.start()
 
             return {"status": "started", "message": "Face scan started in background"}
+
+    def start_target_scan(
+        self,
+        person_id: int,
+        step_sec: float = 1.5,
+        force_rescan: bool = False
+    ) -> Dict[str, Any]:
+        """Launch targeted background hunt across all folders for a specific person's face."""
+        with self._scan_lock:
+            if self.scan_state["is_running"]:
+                return {"status": "already_running", "message": "A scan is already in progress. Please pause or cancel it first."}
+
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, name FROM people WHERE id = ?", (person_id,))
+            p = cursor.fetchone()
+            if not p:
+                raise ValueError(f"Person with ID {person_id} not found")
+            person_name = p["name"]
+
+            cursor.execute("SELECT embedding FROM face_detections WHERE person_id = ? AND embedding IS NOT NULL", (person_id,))
+            rows = cursor.fetchall()
+            if not rows:
+                raise ValueError(f"Person '{person_name}' has no face detections or embeddings to search for")
+
+            self._cancel_scan_event.clear()
+            self.scan_state["is_running"] = True
+            self.scan_state["is_targeted"] = True
+            self.scan_state["target_person_id"] = person_id
+            self.scan_state["target_person_name"] = person_name
+            self.scan_state["matches_found"] = len(rows)
+            self.scan_state["scanned_files"] = 0
+            self.scan_state["total_files"] = 0
+            self.scan_state["faces_found"] = len(rows)
+            self.scan_state["current_file"] = f"Hunting for {person_name} across all folders..."
+            self.scan_state["progress_pct"] = 0.0
+            self.scan_state["error"] = None
+            self.scan_state["start_time"] = time.time()
+
+            t = threading.Thread(
+                target=self._target_scan_worker,
+                args=(person_id, person_name, step_sec, force_rescan),
+                daemon=True
+            )
+            t.start()
+
+            return {
+                "status": "started",
+                "message": f"Hunting for '{person_name}' across all folders in background",
+                "target_person_id": person_id,
+                "target_person_name": person_name
+            }
 
     def cancel_scan(self) -> Dict[str, Any]:
         """Cancel the ongoing face scan."""
@@ -1029,6 +1140,8 @@ class FaceEngine:
 
             logger.info(f"Starting Face Scan on {total} media files...")
 
+            known_people = self._get_known_people_centroids()
+
             for idx, f in enumerate(files_to_scan):
                 if self._cancel_scan_event.is_set():
                     logger.info("Face Scan canceled by user.")
@@ -1044,14 +1157,16 @@ class FaceEngine:
 
                 if fpath.exists():
                     try:
-                        faces_found = self.process_file_faces(fid, fpath, mtype, step_sec=step_sec)
+                        faces_found = self.process_file_faces(
+                            fid, fpath, mtype, step_sec=step_sec, known_people_cache=known_people
+                        )
                         self.scan_state["faces_found"] += faces_found
                     except Exception as e:
                         logger.warning(f"Error scanning faces in {fname}: {e}")
 
                 self.scan_state["scanned_files"] = idx + 1
 
-            # Auto-cluster newly found faces at the end of the scan
+            # Auto-cluster any remaining unassigned faces at the end of the scan
             if self.scan_state["faces_found"] > 0 and not self._cancel_scan_event.is_set():
                 self.scan_state["current_file"] = "Auto-clustering people..."
                 try:
@@ -1065,6 +1180,118 @@ class FaceEngine:
 
         except Exception as e:
             logger.error(f"Face Scan job failed: {e}", exc_info=True)
+            self.scan_state["error"] = str(e)
+        finally:
+            self.scan_state["is_running"] = False
+
+    def _target_scan_worker(
+        self,
+        person_id: int,
+        person_name: str,
+        step_sec: float,
+        force_rescan: bool
+    ):
+        """Worker thread executing targeted face search for a specific person across all media."""
+        try:
+            ensure_models()
+
+            conn = get_db()
+            cursor = conn.cursor()
+
+            # 1. Compute target person's centroid vector
+            cursor.execute("SELECT embedding FROM face_detections WHERE person_id = ? AND embedding IS NOT NULL", (person_id,))
+            rows = cursor.fetchall()
+            if not rows:
+                self.scan_state["error"] = "Target person has no face embeddings"
+                return
+
+            embs = [np.frombuffer(r["embedding"], dtype=np.float32) for r in rows]
+            target_vec = np.mean(embs, axis=0)
+            norm = np.linalg.norm(target_vec)
+            if norm > 0:
+                target_vec = target_vec / norm
+
+            # 2. Instant fast sweep of already extracted unassigned faces
+            cursor.execute("SELECT id, file_id, embedding FROM face_detections WHERE person_id IS NULL AND embedding IS NOT NULL")
+            unassigned_rows = cursor.fetchall()
+            for u in unassigned_rows:
+                u_vec = np.frombuffer(u["embedding"], dtype=np.float32)
+                u_norm = np.linalg.norm(u_vec)
+                if u_norm > 0:
+                    sim = float(np.dot(target_vec, u_vec / u_norm))
+                    if sim >= 0.40:
+                        with db_transaction() as wconn:
+                            wconn.cursor().execute("UPDATE face_detections SET person_id = ? WHERE id = ?", (person_id, u["id"]))
+                            if not person_name.startswith("Unnamed Person"):
+                                wconn.cursor().execute(
+                                    "INSERT OR IGNORE INTO file_tags (file_id, tag, category) VALUES (?, ?, 'speaker')",
+                                    (u["file_id"], person_name)
+                                )
+
+            cursor.execute("SELECT COUNT(*) FROM face_detections WHERE person_id = ?", (person_id,))
+            self.scan_state["matches_found"] = cursor.fetchone()[0]
+
+            # 3. Find files to scan across all folders
+            if force_rescan:
+                cursor.execute("""
+                    SELECT f.id, f.abs_path, f.filename, f.media_type
+                    FROM files f
+                    WHERE f.status = 'active'
+                      AND f.id NOT IN (SELECT DISTINCT file_id FROM face_detections WHERE person_id = ?)
+                    ORDER BY f.mtime DESC
+                """, (person_id,))
+            else:
+                cursor.execute("""
+                    SELECT f.id, f.abs_path, f.filename, f.media_type
+                    FROM files f
+                    WHERE f.status = 'active'
+                      AND f.id NOT IN (SELECT DISTINCT file_id FROM face_detections)
+                    ORDER BY f.mtime DESC
+                """)
+
+            files_to_scan = cursor.fetchall()
+            total = len(files_to_scan)
+            self.scan_state["total_files"] = total
+
+            logger.info(f"Target Scan for '{person_name}' (ID {person_id}) starting on {total} files...")
+
+            known_people = self._get_known_people_centroids()
+
+            for idx, f in enumerate(files_to_scan):
+                if self._cancel_scan_event.is_set():
+                    logger.info(f"Target scan for {person_name} canceled by user.")
+                    break
+
+                fid = f["id"]
+                fpath = Path(f["abs_path"])
+                mtype = f["media_type"]
+                fname = f["filename"]
+
+                self.scan_state["current_file"] = fname
+                self.scan_state["progress_pct"] = round((idx / total) * 100, 1) if total > 0 else 100.0
+
+                if fpath.exists():
+                    try:
+                        faces_found = self.process_file_faces(
+                            fid, fpath, mtype, step_sec=step_sec, known_people_cache=known_people
+                        )
+                        self.scan_state["faces_found"] += faces_found
+
+                        # Refresh live count of matches found for this target person
+                        chk_conn = get_db()
+                        chk_cur = chk_conn.cursor()
+                        chk_cur.execute("SELECT COUNT(*) FROM face_detections WHERE person_id = ?", (person_id,))
+                        self.scan_state["matches_found"] = chk_cur.fetchone()[0]
+                    except Exception as e:
+                        logger.warning(f"Error scanning faces in {fname}: {e}")
+
+                self.scan_state["scanned_files"] = idx + 1
+
+            self.scan_state["progress_pct"] = 100.0
+            self.scan_state["current_file"] = f"Finished searching for {person_name}"
+
+        except Exception as e:
+            logger.error(f"Target Scan failed: {e}", exc_info=True)
             self.scan_state["error"] = str(e)
         finally:
             self.scan_state["is_running"] = False
