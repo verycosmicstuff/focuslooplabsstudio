@@ -1749,13 +1749,39 @@
             <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Name this Person (Optional):</label>
             <input type="text" id="txt-upload-face-name" placeholder="e.g. Alex, Mom, Client A..." style="width: 100%; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 7px 10px; border-radius: 6px; font-size: 13px;">
           </div>
+
+          <!-- Search Scope & Location Picker -->
+          <div style="border-top: 1px solid var(--border-color); padding-top: 10px; display: flex; flex-direction: column; gap: 8px;">
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              <div style="flex: 1; min-width: 200px;">
+                <label style="font-size: 11px; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 3px;">Where to Search (Drive / Scope):</label>
+                <select id="select-upload-scan-source" style="width: 100%; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 6px 8px; border-radius: 6px; font-size: 12px;">
+                  <option value="">🌐 Whole Collection (All Connected Drives)</option>
+                </select>
+              </div>
+              <div style="width: 140px;">
+                <label style="font-size: 11px; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 3px;">Media Type:</label>
+                <select id="select-upload-scan-media-type" style="width: 100%; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 6px 8px; border-radius: 6px; font-size: 12px;">
+                  <option value="all">🎬 Photos & Videos</option>
+                  <option value="photo">📷 Photos Only (Fastest)</option>
+                  <option value="video">🎥 Videos Only</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Optional Subfolder Filter -->
+            <div id="box-upload-scan-folder" style="display: none;">
+              <label style="font-size: 11px; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 3px;">Subfolder / Directory Path (Optional):</label>
+              <input type="text" id="txt-upload-scan-folder" placeholder="e.g. 2024/Weddings or Vacation..." style="width: 100%; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 6px 8px; border-radius: 6px; font-size: 12px;">
+            </div>
+          </div>
         </div>
 
       </div>
       <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px;">
         <button class="btn btn-secondary modal-close">Cancel</button>
         <button id="btn-confirm-upload-face-search" class="btn btn-primary" disabled style="background: linear-gradient(135deg, #06b6d4, #8b5cf6); border: none;">
-          🎯 Find This Face in All Folders
+          🎯 Find This Face
         </button>
       </div>
     </div>

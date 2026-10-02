@@ -5939,19 +5939,36 @@ async function executeCombinePeople(targetId, sourceIds) {
   }
 }
 
-async function startTargetScan(personId, personName) {
+async function startTargetScan(personId, personName, options = {}) {
   if (!personId) return;
   try {
-    showToast(`Hunting for "${personName}" across all folders...`, 'info');
+    const sourceId = options.source_id !== undefined ? options.source_id : (document.getElementById('sel-faces-source')?.value || null);
+    const folderFilter = options.folder_filter !== undefined ? options.folder_filter : (document.getElementById('sel-faces-folder')?.value || null);
+    const mediaType = options.media_type || (document.getElementById('sel-faces-media-type')?.value || 'all');
+
+    let scopeLabel = 'all folders';
+    if (sourceId) {
+      const srcOpt = document.querySelector(`#sel-faces-source option[value="${sourceId}"]`);
+      scopeLabel = srcOpt ? srcOpt.textContent.trim() : `Drive ${sourceId}`;
+    }
+    if (folderFilter) scopeLabel += ` (${folderFilter})`;
+
+    showToast(`Hunting for "${personName}" in ${scopeLabel}...`, 'info');
     const res = await fetch(`${API_BASE}/api/faces/people/${personId}/find-everywhere`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ step_sec: 1.5, force_rescan: false })
+      body: JSON.stringify({
+        source_id: sourceId ? parseInt(sourceId, 10) : null,
+        folder_filter: folderFilter || null,
+        media_type: mediaType,
+        step_sec: options.step_sec || 1.5,
+        force_rescan: options.force_rescan || false
+      })
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Failed to start targeted search');
 
-    showToast(`Targeted hunt active for "${personName}"! Matches will appear live.`, 'success');
+    showToast(`Targeted hunt active for "${personName}" in ${data.scope || scopeLabel}! Matches will appear live.`, 'success');
     checkFaceScanStatus();
   } catch (err) {
     showToast('Failed to start targeted search: ' + err.message, 'error');
@@ -6353,6 +6370,10 @@ function setupUploadFaceSearchModal() {
   const choiceChips = document.getElementById('container-face-choice-chips');
   const txtName = document.getElementById('txt-upload-face-name');
   const btnConfirm = document.getElementById('btn-confirm-upload-face-search');
+  const selScopeSource = document.getElementById('select-upload-scan-source');
+  const selScopeMediaType = document.getElementById('select-upload-scan-media-type');
+  const boxScopeFolder = document.getElementById('box-upload-scan-folder');
+  const txtScopeFolder = document.getElementById('txt-upload-scan-folder');
 
   let currentFileBlob = null;
   let currentFilePath = null;
@@ -6366,6 +6387,9 @@ function setupUploadFaceSearchModal() {
     selectedFaceIndex = 0;
     if (fileInput) fileInput.value = '';
     if (txtName) txtName.value = '';
+    if (txtScopeFolder) txtScopeFolder.value = '';
+    if (boxScopeFolder) boxScopeFolder.style.display = 'none';
+    if (selScopeMediaType) selScopeMediaType.value = 'all';
     if (choiceChips) choiceChips.innerHTML = '';
     if (choiceBox) choiceBox.style.display = 'none';
     if (previewBox) previewBox.style.display = 'none';
@@ -6376,7 +6400,7 @@ function setupUploadFaceSearchModal() {
     }
     if (btnConfirm) {
       btnConfirm.disabled = true;
-      btnConfirm.innerHTML = '🎯 Find This Face in All Folders';
+      btnConfirm.innerHTML = '🎯 Find This Face';
     }
   }
 
@@ -6388,8 +6412,36 @@ function setupUploadFaceSearchModal() {
 
   btnOpen.addEventListener('click', () => {
     resetState();
+    if (selScopeSource) {
+      selScopeSource.innerHTML = '<option value="">🌐 Whole Collection (All Connected Drives)</option>';
+      if (Array.isArray(sourcesData)) {
+        sourcesData.forEach(s => {
+          const opt = document.createElement('option');
+          opt.value = s.id;
+          opt.textContent = `${s.label} (${s.path})`;
+          selScopeSource.appendChild(opt);
+        });
+      }
+      const activeToolbarSource = document.getElementById('sel-faces-source')?.value;
+      if (activeToolbarSource) {
+        selScopeSource.value = activeToolbarSource;
+        if (boxScopeFolder) boxScopeFolder.style.display = 'block';
+      }
+      const activeToolbarFolder = document.getElementById('sel-faces-folder')?.value;
+      if (activeToolbarFolder && txtScopeFolder) {
+        txtScopeFolder.value = activeToolbarFolder;
+      }
+    }
     modal.classList.add('active');
   });
+
+  if (selScopeSource) {
+    selScopeSource.addEventListener('change', () => {
+      if (boxScopeFolder) {
+        boxScopeFolder.style.display = selScopeSource.value ? 'block' : 'none';
+      }
+    });
+  }
 
   if (btnChange) {
     btnChange.addEventListener('click', () => {
@@ -6595,6 +6647,9 @@ function setupUploadFaceSearchModal() {
   if (btnConfirm) {
     btnConfirm.addEventListener('click', async () => {
       const name = txtName ? txtName.value.trim() : '';
+      const sourceId = selScopeSource && selScopeSource.value ? parseInt(selScopeSource.value, 10) : null;
+      const folderFilter = txtScopeFolder && txtScopeFolder.value.trim() ? txtScopeFolder.value.trim() : null;
+      const mediaType = selScopeMediaType ? selScopeMediaType.value : 'all';
 
       btnConfirm.disabled = true;
       btnConfirm.innerHTML = '⏳ Uploading & Launching Hunt...';
@@ -6606,6 +6661,9 @@ function setupUploadFaceSearchModal() {
           fd.append('file', currentFileBlob);
           if (name) fd.append('name', name);
           fd.append('face_index', selectedFaceIndex);
+          if (sourceId) fd.append('source_id', sourceId);
+          if (folderFilter) fd.append('folder_filter', folderFilter);
+          fd.append('media_type', mediaType);
           fd.append('step_sec', 1.5);
           fd.append('force_rescan', false);
 
@@ -6621,6 +6679,9 @@ function setupUploadFaceSearchModal() {
               path: currentFilePath,
               name: name || undefined,
               face_index: selectedFaceIndex,
+              source_id: sourceId,
+              folder_filter: folderFilter,
+              media_type: mediaType,
               step_sec: 1.5,
               force_rescan: false
             })
@@ -6634,9 +6695,10 @@ function setupUploadFaceSearchModal() {
 
         const person = data.person || {};
         const pName = person.person_name || name || `Person ${person.person_id}`;
+        const scopeDesc = data.scan?.scope || 'selected location';
 
         modal.classList.remove('active');
-        showToast(`Started targeted search for "${pName}" across all folders!`, 'success');
+        showToast(`Started targeted search for "${pName}" in ${scopeDesc}!`, 'success');
 
         loadFacesCatalog();
         checkFaceScanStatus();
@@ -6647,7 +6709,7 @@ function setupUploadFaceSearchModal() {
       } catch (err) {
         showToast('Failed to start search: ' + err.message, 'error');
         btnConfirm.disabled = false;
-        btnConfirm.innerHTML = '🎯 Find This Face in All Folders';
+        btnConfirm.innerHTML = '🎯 Find This Face';
       }
     });
   }

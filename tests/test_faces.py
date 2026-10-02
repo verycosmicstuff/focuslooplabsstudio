@@ -457,17 +457,21 @@ class TestFaceEngineAndCatalog(unittest.TestCase):
             data_prev = resp_prev.json()
             self.assertEqual(data_prev["count"], 1)
 
-            # 4. Test POST /api/faces/upload-and-find API
+            # 4. Test POST /api/faces/upload-and-find API with custom scope
             resp_hunt = self.client.post("/api/faces/upload-and-find", json={
                 "image_base64": b64_str,
                 "name": "Detective Holmes",
                 "face_index": 0,
+                "source_id": 1,
+                "folder_filter": "Photos",
+                "media_type": "photo",
                 "step_sec": 1.5
             })
             self.assertEqual(resp_hunt.status_code, 200)
             data_hunt = resp_hunt.json()
             self.assertEqual(data_hunt["status"], "started")
             self.assertEqual(data_hunt["person"]["person_name"], "Detective Holmes")
+            self.assertIn("Photos", data_hunt["scan"]["scope"])
 
 
 if __name__ == "__main__":

@@ -1726,12 +1726,25 @@ def api_list_people(
 def api_find_person_everywhere(person_id: int, payload: Optional[Dict[str, Any]] = None):
     step_sec = 1.5
     force_rescan = False
+    source_id = None
+    folder_filter = None
+    media_type = "all"
     if payload:
         step_sec = float(payload.get("step_sec", 1.5))
         force_rescan = bool(payload.get("force_rescan", False))
+        if payload.get("source_id") is not None and str(payload.get("source_id")).strip() != "":
+            try:
+                source_id = int(payload.get("source_id"))
+            except ValueError:
+                source_id = None
+        folder_filter = payload.get("folder_filter") or None
+        media_type = payload.get("media_type") or "all"
     try:
         return face_engine.start_target_scan(
             person_id=person_id,
+            source_id=source_id,
+            folder_filter=folder_filter,
+            media_type_filter=media_type,
             step_sec=step_sec,
             force_rescan=force_rescan
         )
@@ -1780,6 +1793,9 @@ async def api_upload_and_find_face(
     path: Optional[str] = Form(None),
     name: Optional[str] = Form(None),
     face_index: int = Form(0),
+    source_id: Optional[int] = Form(None),
+    folder_filter: Optional[str] = Form(None),
+    media_type: str = Form("all"),
     step_sec: float = Form(1.5),
     force_rescan: bool = Form(False)
 ):
@@ -1789,6 +1805,9 @@ async def api_upload_and_find_face(
         img_bytes = None
         person_name = name
         f_idx = face_index
+        s_id = source_id
+        f_filter = folder_filter
+        m_type = media_type
         s_sec = step_sec
         f_rescan = force_rescan
 
@@ -1796,6 +1815,13 @@ async def api_upload_and_find_face(
             body = await request.json()
             person_name = body.get("name")
             f_idx = int(body.get("face_index", 0))
+            if body.get("source_id") is not None and str(body.get("source_id")).strip() != "":
+                try:
+                    s_id = int(body.get("source_id"))
+                except ValueError:
+                    s_id = None
+            f_filter = body.get("folder_filter") or None
+            m_type = body.get("media_type") or "all"
             s_sec = float(body.get("step_sec", 1.5))
             f_rescan = bool(body.get("force_rescan", False))
 
@@ -1828,9 +1854,12 @@ async def api_upload_and_find_face(
 
         person_id = reg_info["person_id"]
 
-        # 2. Launch targeted scan across all folders immediately
+        # 2. Launch targeted scan across selected scope
         scan_info = face_engine.start_target_scan(
             person_id=person_id,
+            source_id=s_id,
+            folder_filter=f_filter,
+            media_type_filter=m_type,
             step_sec=s_sec,
             force_rescan=f_rescan
         )

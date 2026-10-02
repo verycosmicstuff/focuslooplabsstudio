@@ -78,9 +78,9 @@ def _get_detector(input_size: Tuple[int, int] = (640, 640)) -> cv2.FaceDetectorY
             _thread_local.detector_size = input_size
     return _thread_local.detector
 
-# Clamp OpenCV CPU threads to prevent maxing out CPU cores
+# Clamp OpenCV CPU threads to 1 to prevent maxing out CPU cores during background scan
 try:
-    cv2.setNumThreads(2)
+    cv2.setNumThreads(1)
 except Exception:
     pass
 
@@ -103,6 +103,8 @@ def _get_gpu_session():
         import onnxruntime as ort
         if 'CUDAExecutionProvider' in ort.get_available_providers():
             so = ort.SessionOptions()
+            so.intra_op_num_threads = 1
+            so.inter_op_num_threads = 1
             so.log_severity_level = 3  # Suppress verbose warnings
             ensure_models()
             _gpu_session = ort.InferenceSession(str(SFACE_PATH), so, providers=['CUDAExecutionProvider'])
@@ -288,7 +290,7 @@ class FaceEngine:
 
             fh, fw = frame.shape[:2]
             scale = 1.0
-            max_dim = 1080
+            max_dim = 640  # Native YuNet resolution; prevents high CPU downscaling / inference overhead
             if max(fw, fh) > max_dim:
                 scale = max_dim / max(fw, fh)
                 sw = max(1, int(fw * scale))
@@ -356,7 +358,7 @@ class FaceEngine:
                     except Exception as e:
                         logger.debug(f"Video frame face extraction failed at {t}s: {e}")
 
-            time.sleep(0.002)
+            time.sleep(0.005)
             t += step_sec
 
         cap.release()
@@ -1033,10 +1035,13 @@ class FaceEngine:
     def start_target_scan(
         self,
         person_id: int,
+        source_id: Optional[int] = None,
+        folder_filter: Optional[str] = None,
+        media_type_filter: str = "all",
         step_sec: float = 1.5,
         force_rescan: bool = False
     ) -> Dict[str, Any]:
-        """Launch targeted background hunt across all folders for a specific person's face."""
+        """Launch targeted background hunt across specified scope or all folders for a specific person's face."""
         with self._scan_lock:
             if self.scan_state["is_running"]:
                 return {"status": "already_running", "message": "A scan is already in progress. Please pause or cancel it first."}
@@ -1063,23 +1068,34 @@ class FaceEngine:
             self.scan_state["scanned_files"] = 0
             self.scan_state["total_files"] = 0
             self.scan_state["faces_found"] = len(rows)
-            self.scan_state["current_file"] = f"Hunting for {person_name} across all folders..."
+
+            loc_label = "all folders"
+            if source_id and source_id > 0:
+                cursor.execute("SELECT label FROM sources WHERE id = ?", (source_id,))
+                s_row = cursor.fetchone()
+                if s_row:
+                    loc_label = s_row["label"]
+            if folder_filter:
+                loc_label += f" ({folder_filter})"
+
+            self.scan_state["current_file"] = f"Hunting for {person_name} in {loc_label}..."
             self.scan_state["progress_pct"] = 0.0
             self.scan_state["error"] = None
             self.scan_state["start_time"] = time.time()
 
             t = threading.Thread(
                 target=self._target_scan_worker,
-                args=(person_id, person_name, step_sec, force_rescan),
+                args=(person_id, person_name, source_id, folder_filter, media_type_filter, step_sec, force_rescan),
                 daemon=True
             )
             t.start()
 
             return {
                 "status": "started",
-                "message": f"Hunting for '{person_name}' across all folders in background",
+                "message": f"Hunting for '{person_name}' in {loc_label} in background",
                 "target_person_id": person_id,
-                "target_person_name": person_name
+                "target_person_name": person_name,
+                "scope": loc_label
             }
 
     def detect_faces_preview(self, image_bytes: bytes) -> List[Dict[str, Any]]:
@@ -1389,10 +1405,13 @@ class FaceEngine:
         self,
         person_id: int,
         person_name: str,
-        step_sec: float,
-        force_rescan: bool
+        source_id: Optional[int] = None,
+        folder_filter: Optional[str] = None,
+        media_type_filter: str = "all",
+        step_sec: float = 1.5,
+        force_rescan: bool = False
     ):
-        """Worker thread executing targeted face search for a specific person across all media."""
+        """Worker thread executing targeted face search for a specific person across media scope."""
         try:
             ensure_models()
 
@@ -1432,23 +1451,40 @@ class FaceEngine:
             cursor.execute("SELECT COUNT(*) FROM face_detections WHERE person_id = ?", (person_id,))
             self.scan_state["matches_found"] = cursor.fetchone()[0]
 
-            # 3. Find files to scan across all folders
-            if force_rescan:
-                cursor.execute("""
-                    SELECT f.id, f.abs_path, f.filename, f.media_type
-                    FROM files f
-                    WHERE f.status = 'active'
-                      AND f.id NOT IN (SELECT DISTINCT file_id FROM face_detections WHERE person_id = ?)
-                    ORDER BY f.mtime DESC
-                """, (person_id,))
+            # 3. Find files to scan according to selected scope (drive, folder, media_type)
+            conditions = ["f.status = 'active'"]
+            params: List[Any] = []
+
+            if media_type_filter == "photo":
+                conditions.append("f.media_type IN ('photo', 'raw')")
+            elif media_type_filter == "video":
+                conditions.append("f.media_type = 'video'")
             else:
-                cursor.execute("""
-                    SELECT f.id, f.abs_path, f.filename, f.media_type
-                    FROM files f
-                    WHERE f.status = 'active'
-                      AND f.id NOT IN (SELECT DISTINCT file_id FROM face_detections)
-                    ORDER BY f.mtime DESC
-                """)
+                conditions.append("f.media_type IN ('photo', 'raw', 'video')")
+
+            if source_id is not None and source_id > 0:
+                conditions.append("f.source_id = ?")
+                params.append(source_id)
+
+            if folder_filter:
+                norm_folder = folder_filter.replace("\\", "/").strip("/")
+                conditions.append("(f.rel_path LIKE ? OR f.rel_path LIKE ?)")
+                params.append(f"{norm_folder}/%")
+                params.append(f"{norm_folder}")
+
+            if force_rescan:
+                conditions.append("f.id NOT IN (SELECT DISTINCT file_id FROM face_detections WHERE person_id = ?)")
+                params.append(person_id)
+            else:
+                conditions.append("f.id NOT IN (SELECT DISTINCT file_id FROM face_detections)")
+
+            where_sql = " AND ".join(conditions)
+            cursor.execute(f"""
+                SELECT f.id, f.abs_path, f.filename, f.media_type
+                FROM files f
+                WHERE {where_sql}
+                ORDER BY f.mtime DESC
+            """, params)
 
             files_to_scan = cursor.fetchall()
             total = len(files_to_scan)
@@ -1487,6 +1523,7 @@ class FaceEngine:
                         logger.warning(f"Error scanning faces in {fname}: {e}")
 
                 self.scan_state["scanned_files"] = idx + 1
+                time.sleep(0.005)  # Yield CPU to keep system cool and responsive
 
             self.scan_state["progress_pct"] = 100.0
             self.scan_state["current_file"] = f"Finished searching for {person_name}"
