@@ -999,6 +999,146 @@ class FaceEngine:
             "media": list(media_map.values())
         }
 
+    def get_faces_by_filename(
+        self,
+        query: str,
+        limit: int = 10,
+        source_id: Optional[int] = None,
+        media_type: str = "all"
+    ) -> Dict[str, Any]:
+        """
+        Search files by filename or path that have face detections,
+        returning detected faces from that file and the grouped media
+        of all matching people across the collection.
+        """
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cleaned_query = (query or "").strip()
+        if not cleaned_query:
+            return {"query": "", "matched_files_count": 0, "files": []}
+
+        search_pattern = f"%{cleaned_query}%"
+
+        file_conditions = [
+            "(f.filename LIKE ? OR f.rel_path LIKE ?)",
+            "EXISTS (SELECT 1 FROM face_detections fd WHERE fd.file_id = f.id)"
+        ]
+        file_params: List[Any] = [search_pattern, search_pattern]
+
+        if source_id is not None and source_id > 0:
+            file_conditions.append("f.source_id = ?")
+            file_params.append(source_id)
+
+        if media_type == "video":
+            file_conditions.append("f.media_type = 'video'")
+        elif media_type == "photo":
+            file_conditions.append("f.media_type != 'video'")
+
+        where_files = " AND ".join(file_conditions)
+
+        cursor.execute(f"""
+            SELECT f.id, f.filename, f.rel_path, f.abs_path, f.media_type, f.size_bytes, f.mtime,
+                   s.label as source_label, s.drive_type
+            FROM files f
+            LEFT JOIN sources s ON s.id = f.source_id
+            WHERE {where_files}
+            ORDER BY 
+                CASE 
+                    WHEN LOWER(f.filename) = LOWER(?) THEN 0
+                    WHEN LOWER(f.filename) LIKE LOWER(?) THEN 1
+                    ELSE 2
+                END,
+                f.mtime DESC
+            LIMIT ?
+        """, file_params + [cleaned_query, f"{cleaned_query}%", limit])
+        matched_files = cursor.fetchall()
+
+        if not matched_files:
+            return {"query": cleaned_query, "matched_files_count": 0, "files": []}
+
+        results = []
+        for mf in matched_files:
+            fid = mf["id"]
+
+            cursor.execute("""
+                SELECT fd.id as face_id, fd.person_id, fd.timestamp_sec,
+                       fd.box_x, fd.box_y, fd.box_w, fd.box_h,
+                       fd.confidence, fd.thumbnail_path,
+                       p.name as person_name, p.avatar_face_id
+                FROM face_detections fd
+                LEFT JOIN people p ON p.id = fd.person_id
+                WHERE fd.file_id = ?
+                ORDER BY fd.timestamp_sec ASC, fd.id ASC
+            """, (fid,))
+            detections_in_file = cursor.fetchall()
+
+            faces_in_file = []
+            distinct_person_ids = []
+            unassigned_face_ids = []
+
+            for d in detections_in_file:
+                p_id = d["person_id"]
+                p_name = d["person_name"] or "Unassigned Face"
+                if p_id is not None:
+                    if p_id not in distinct_person_ids:
+                        distinct_person_ids.append(p_id)
+                else:
+                    unassigned_face_ids.append(d["face_id"])
+
+                faces_in_file.append({
+                    "face_id": d["face_id"],
+                    "person_id": p_id,
+                    "person_name": p_name,
+                    "timestamp_sec": d["timestamp_sec"] or 0.0,
+                    "box": [d["box_x"], d["box_y"], d["box_w"], d["box_h"]],
+                    "confidence": d["confidence"],
+                    "thumbnail_url": f"/api/faces/thumbnail/{d['face_id']}" if d["thumbnail_path"] else None
+                })
+
+            people_groups = []
+            for p_id in distinct_person_ids:
+                try:
+                    p_details = self.get_person_details(p_id)
+                    p_media = p_details.get("media", [])
+                    photo_cnt = sum(1 for m in p_media if m.get("media_type") != "video")
+                    video_cnt = sum(1 for m in p_media if m.get("media_type") == "video")
+                    people_groups.append({
+                        "person_id": p_id,
+                        "person_name": p_details["name"],
+                        "avatar_url": p_details.get("avatar_url"),
+                        "is_named": p_details["is_named"],
+                        "total_appearances": p_details["total_faces"],
+                        "photo_count": photo_cnt,
+                        "video_count": video_cnt,
+                        "media": p_media
+                    })
+                except Exception as e:
+                    logger.debug(f"Error getting details for person {p_id}: {e}")
+
+            people_groups.sort(key=lambda p: (not p["is_named"], -p["total_appearances"]))
+
+            results.append({
+                "file_id": fid,
+                "filename": mf["filename"],
+                "rel_path": mf["rel_path"],
+                "abs_path": mf["abs_path"],
+                "media_type": mf["media_type"],
+                "size_bytes": mf["size_bytes"],
+                "mtime": mf["mtime"],
+                "source_label": mf["source_label"] or "Drive",
+                "faces_in_file": faces_in_file,
+                "faces_count": len(faces_in_file),
+                "people_count": len(people_groups),
+                "people": people_groups
+            })
+
+        return {
+            "query": cleaned_query,
+            "matched_files_count": len(results),
+            "files": results
+        }
+
     # -------------------------------------------------------------
     # Background Scanner Job
     # -------------------------------------------------------------

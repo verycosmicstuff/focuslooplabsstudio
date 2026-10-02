@@ -16,12 +16,11 @@
 - `ui/`: Responsive dark dashboard (`index.html`, `js/app.js`, `css/app.css`).
 
 ## Recent Changes
-- Released **v2.3.3** CI & macOS Release Pipeline Fix:
-  - Fixed macOS CI test suite failure: added `python-multipart` to `requirements.txt` and GitHub Actions workflow (required by FastAPI for file upload & form data endpoints).
-  - Fixed missing `import sys` in `src/config.py` and stripped UTF-8 BOM headers.
-  - Added `src.analyzer.face_engine` and `multipart` to PyInstaller hidden imports for macOS arm64 bundle.
-  - Made VideoToolbox transcode test resilient to zero-bloat file unlinking.
-- 53/53 unit tests passing cross-platform.
+- Released **v2.3.4** File Name Face Search & Grouped Media Inspector:
+  - Added `GET /api/faces/by-file`: search any photo or video filename to extract its detected face chips and retrieve grouped media across all drives for those same people.
+  - Added prominent File Name search bar and "Inspect by File Name" sort option to People & Faces toolbar (`ui/index.html`, `ui/js/app.js`).
+  - Renders source file banner with face chips, and grouped media galleries with interactive universal lightbox viewing, system video playback, and explorer reveal.
+- 54/54 unit tests passing cross-platform.
 
 ## Active Objective
-- Verify macOS GitHub Actions build pipeline success and assist user with production usage.
+- Support user with testing the file name face search and live production workflows.

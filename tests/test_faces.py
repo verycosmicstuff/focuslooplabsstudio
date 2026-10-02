@@ -473,6 +473,59 @@ class TestFaceEngineAndCatalog(unittest.TestCase):
             self.assertEqual(data_hunt["person"]["person_name"], "Detective Holmes")
             self.assertIn("Photos", data_hunt["scan"]["scope"])
 
+    def test_12_get_faces_by_filename(self):
+        """Test searching faces by filename and retrieving grouped media of those same faces."""
+        conn = get_db()
+        cursor = conn.cursor()
+
+        # Create person and face detections across 2 files
+        cursor.execute("INSERT INTO people (id, name, avatar_face_id) VALUES (301, 'Special Agent Cooper', 3011)")
+        
+        emb = self._generate_synthetic_embedding(301)
+        # Face 3011 in File 1 (portrait1.jpg)
+        cursor.execute("""
+            INSERT INTO face_detections (id, file_id, person_id, timestamp_sec, box_x, box_y, box_w, box_h, confidence, embedding, thumbnail_path)
+            VALUES (3011, 1, 301, 0.0, 15, 15, 60, 60, 0.96, ?, 'cooper1.jpg')
+        """, (emb,))
+
+        # Face 3012 in File 3 (interview.mp4)
+        cursor.execute("""
+            INSERT INTO face_detections (id, file_id, person_id, timestamp_sec, box_x, box_y, box_w, box_h, confidence, embedding, thumbnail_path)
+            VALUES (3012, 3, 301, 12.0, 20, 20, 55, 55, 0.94, ?, 'cooper2.jpg')
+        """, (emb,))
+        conn.commit()
+
+        # 1. Test face_engine direct call
+        result = face_engine.get_faces_by_filename("portrait1.jpg")
+        self.assertEqual(result["matched_files_count"], 1)
+        file_res = result["files"][0]
+        self.assertEqual(file_res["filename"], "portrait1.jpg")
+        self.assertEqual(len(file_res["faces_in_file"]), 1)
+        self.assertEqual(file_res["faces_in_file"][0]["person_name"], "Special Agent Cooper")
+
+        # Grouped media of this person should include both portrait1.jpg and interview.mp4
+        self.assertEqual(len(file_res["people"]), 1)
+        person_group = file_res["people"][0]
+        self.assertEqual(person_group["person_id"], 301)
+        self.assertEqual(person_group["person_name"], "Special Agent Cooper")
+        self.assertEqual(person_group["total_appearances"], 2)
+        media_fids = [m["file_id"] for m in person_group["media"]]
+        self.assertIn(1, media_fids)
+        self.assertIn(3, media_fids)
+
+        # 2. Test API GET /api/faces/by-file?query=portrait1
+        resp = self.client.get("/api/faces/by-file?query=portrait1")
+        self.assertEqual(resp.status_code, 200)
+        api_data = resp.json()
+        self.assertEqual(api_data["matched_files_count"], 1)
+        self.assertEqual(api_data["files"][0]["filename"], "portrait1.jpg")
+        self.assertEqual(len(api_data["files"][0]["people"][0]["media"]), 2)
+
+        # 3. Test API GET with non-matching filename
+        resp_empty = self.client.get("/api/faces/by-file?query=no_such_file_xyz.png")
+        self.assertEqual(resp_empty.status_code, 200)
+        self.assertEqual(resp_empty.json()["matched_files_count"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

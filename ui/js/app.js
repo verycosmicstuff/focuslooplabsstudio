@@ -5733,6 +5733,377 @@ function renderPeopleGrid(people) {
   });
 }
 
+// Window global helper for clear button
+window.clearFacesFileSearchGlobal = function() {
+  const txt = document.getElementById('txt-faces-file-search');
+  if (txt) txt.value = '';
+  const clearBtn = document.getElementById('btn-clear-faces-file-search');
+  if (clearBtn) clearBtn.style.display = 'none';
+  const statusBox = document.getElementById('faces-file-search-status');
+  if (statusBox) statusBox.style.display = 'none';
+  const selSort = document.getElementById('sel-faces-sort');
+  if (selSort && selSort.value === 'file_lookup') {
+    selSort.value = 'count';
+  }
+  loadFacesCatalog();
+};
+
+async function searchFacesByFilename(query) {
+  query = (query || '').trim();
+  if (!query) {
+    window.clearFacesFileSearchGlobal();
+    return;
+  }
+
+  const container = document.getElementById('faces-people-grid');
+  const emptyPlaceholder = document.getElementById('faces-empty-placeholder');
+  const clearBtn = document.getElementById('btn-clear-faces-file-search');
+  if (clearBtn) clearBtn.style.display = 'block';
+
+  const sourceId = document.getElementById('sel-faces-source')?.value || '';
+  const mediaType = document.getElementById('sel-faces-media-type')?.value || 'all';
+
+  if (container) {
+    container.innerHTML = `
+      <div style="grid-column: 1 / -1; text-align: center; padding: 60px 20px; color: var(--text-muted);">
+        <span class="spinner" style="width: 32px; height: 32px; border-width: 3px; margin: 0 auto 12px; display: block;"></span>
+        <div style="font-size: 15px; font-weight: 600; color: #fff;">Searching for "${escapeHtml(query)}" and extracting detected faces...</div>
+      </div>
+    `;
+  }
+
+  try {
+    let url = `${API_BASE}/api/faces/by-file?query=${encodeURIComponent(query)}&media_type=${encodeURIComponent(mediaType)}`;
+    if (sourceId) url += `&source_id=${encodeURIComponent(sourceId)}`;
+
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Search failed');
+    const data = await res.json();
+
+    renderFileFacesResult(data);
+  } catch (err) {
+    console.error('Error searching faces by file:', err);
+    showToast('Failed to find file faces: ' + err.message, 'error');
+    loadFacesCatalog();
+  }
+}
+
+function renderFileFacesResult(data) {
+  const container = document.getElementById('faces-people-grid');
+  const emptyPlaceholder = document.getElementById('faces-empty-placeholder');
+  const statusBox = document.getElementById('faces-file-search-status');
+  const statusLbl = document.getElementById('lbl-faces-file-search-result');
+  if (!container) return;
+
+  container.innerHTML = '';
+  if (emptyPlaceholder) emptyPlaceholder.style.display = 'none';
+
+  if (!data.files || data.files.length === 0) {
+    if (statusBox) statusBox.style.display = 'none';
+    container.innerHTML = `
+      <div style="grid-column: 1 / -1; text-align: center; padding: 70px 20px; color: var(--text-muted);">
+        <div style="font-size: 46px; margin-bottom: 12px;">📁🔍</div>
+        <h4 style="font-size: 17px; color: var(--text-main); margin-bottom: 6px;">No faces detected in "${escapeHtml(data.query)}"</h4>
+        <p style="font-size: 13px; max-width: 520px; margin: 0 auto 18px; line-height: 1.5;">
+          No indexed files matching "<strong>${escapeHtml(data.query)}</strong>" currently have detected faces.
+          You can run <strong>"Scan for Faces"</strong> to analyze your photos and video keyframes.
+        </p>
+        <button class="btn btn-secondary btn-sm" onclick="clearFacesFileSearchGlobal()">✕ Back to All People</button>
+      </div>
+    `;
+    return;
+  }
+
+  if (statusBox) {
+    statusBox.style.display = 'flex';
+    const totalFaces = data.files.reduce((acc, f) => acc + (f.faces_count || 0), 0);
+    const totalPeople = data.files.reduce((acc, f) => acc + (f.people_count || 0), 0);
+    if (statusLbl) {
+      statusLbl.innerHTML = `Showing faces from <strong>${data.matched_files_count} file${data.matched_files_count > 1 ? 's' : ''}</strong> matching "${escapeHtml(data.query)}" &bull; ${totalFaces} detected face${totalFaces !== 1 ? 's' : ''} across ${totalPeople} person group${totalPeople !== 1 ? 's' : ''}`;
+    }
+  }
+
+  data.files.forEach(fileItem => {
+    const isVideo = fileItem.media_type === 'video';
+    const fileCard = document.createElement('div');
+    fileCard.className = 'file-faces-inspector-block';
+    fileCard.style.cssText = `
+      grid-column: 1 / -1;
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    `;
+
+    // 1. Source File Header
+    const headerHtml = `
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 14px; flex-wrap: wrap; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 14px;">
+          <div style="width: 44px; height: 44px; border-radius: 10px; background: rgba(6,182,212,0.12); border: 1px solid var(--accent-cyan); display: flex; align-items: center; justify-content: center; font-size: 22px;">
+            ${isVideo ? '🎥' : '📷'}
+          </div>
+          <div>
+            <div style="font-size: 16px; font-weight: 700; color: #fff; word-break: break-all; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <span>${escapeHtml(fileItem.filename)}</span>
+              <span class="brand-badge" style="font-size: 11px; background: rgba(6, 182, 212, 0.2); color: var(--accent-cyan); font-weight: 600;">
+                ${fileItem.faces_count} face${fileItem.faces_count !== 1 ? 's' : ''} detected
+              </span>
+            </div>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px; display: flex; gap: 8px; flex-wrap: wrap;">
+              <span>📁 ${fileItem.source_label || 'Drive'}</span> &bull; 
+              <span>${formatBytes(fileItem.size_bytes)}</span> &bull; 
+              <span style="font-family: monospace; color: #94a3b8; max-width: 450px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(fileItem.abs_path)}">${escapeHtml(fileItem.abs_path)}</span>
+            </div>
+          </div>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-secondary btn-sm btn-inspect-play" style="font-size: 11px; padding: 6px 12px; gap: 5px; font-weight: 600;">
+            ${isVideo ? '▶ Play Video' : '👁️ View Photo'}
+          </button>
+          <button class="btn btn-secondary btn-sm btn-inspect-reveal" style="font-size: 11px; padding: 6px 10px;" title="Reveal in File Explorer">
+            📂 Reveal
+          </button>
+        </div>
+      </div>
+    `;
+
+    // 2. Detected Faces in this File Bar
+    let faceChipsHtml = '';
+    if (fileItem.faces_in_file && fileItem.faces_in_file.length > 0) {
+      faceChipsHtml = fileItem.faces_in_file.map(f => {
+        const thumb = f.thumbnail_url ? (API_BASE + f.thumbnail_url) : '';
+        const timeSec = f.timestamp_sec || 0.0;
+        const mins = Math.floor(timeSec / 60);
+        const secs = Math.floor(timeSec % 60);
+        const timecode = isVideo ? `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}` : '';
+        const matchPct = Math.round(f.confidence * 100);
+
+        return `
+          <div class="file-face-chip" data-person-id="${f.person_id || ''}" style="display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.4); border: 1px solid var(--border-color); border-radius: 8px; padding: 6px 10px; cursor: pointer; transition: all 0.15s ease;" title="Click to jump to grouped media">
+            ${thumb ? `<img src="${thumb}" alt="Face" style="width: 38px; height: 38px; border-radius: 50%; object-fit: cover; border: 2px solid var(--accent-cyan);">` : `
+              <div style="width: 38px; height: 38px; border-radius: 50%; background: #334155; display:flex; align-items:center; justify-content:center; font-size:16px;">👤</div>
+            `}
+            <div>
+              <div style="font-size: 12px; font-weight: 700; color: #fff;">${escapeHtml(f.person_name)}</div>
+              <div style="font-size: 10px; color: var(--text-muted);">
+                ${timecode ? `<span>▶ ${timecode} &bull; </span>` : ''}<span>${matchPct}% conf</span>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    const facesSectionHtml = `
+      <div style="background: rgba(0,0,0,0.25); border-radius: 10px; padding: 12px 16px; border: 1px solid rgba(255,255,255,0.05);">
+        <div style="font-size: 11px; font-weight: 700; color: var(--accent-cyan); text-transform: uppercase; margin-bottom: 10px; letter-spacing: 0.5px;">
+          👤 Faces Detected Inside "${escapeHtml(fileItem.filename)}":
+        </div>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+          ${faceChipsHtml || '<span style="color:var(--text-muted); font-size:12px;">No individual face chips extracted</span>'}
+        </div>
+      </div>
+    `;
+
+    // 3. Grouped Media Sections for Each Person
+    let peopleSectionsHtml = '';
+    if (fileItem.people && fileItem.people.length > 0) {
+      peopleSectionsHtml = fileItem.people.map(person => {
+        const avatarUrl = person.avatar_url ? (API_BASE + person.avatar_url) : '';
+        const pName = person.person_name;
+        const isNamed = person.is_named;
+        const appearances = person.total_appearances || 0;
+        const photoCnt = person.photo_count || 0;
+        const videoCnt = person.video_count || 0;
+
+        let mediaCardsHtml = '';
+        if (person.media && person.media.length > 0) {
+          mediaCardsHtml = person.media.map(item => {
+            const isV = item.media_type === 'video';
+            const thumbUrl = `${API_BASE}/api/thumbnail/${item.file_id}`;
+            const faceItem = item.faces && item.faces.length > 0 ? item.faces[0] : null;
+            const faceThumbUrl = faceItem && faceItem.thumbnail_url ? `${API_BASE}${faceItem.thumbnail_url}` : '';
+            const timeSec = faceItem ? faceItem.timestamp_sec : 0.0;
+            const mins = Math.floor(timeSec / 60);
+            const secs = Math.floor(timeSec % 60);
+            const timecodeStr = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+            const isCurrentFile = item.file_id === fileItem.file_id;
+
+            return `
+              <div class="person-media-card ${isCurrentFile ? 'current-searched-file' : ''}" style="${isCurrentFile ? 'border-color: var(--accent-cyan); box-shadow: 0 0 10px rgba(6,182,212,0.3);' : ''}" data-file-id="${item.file_id}" data-abs-path="${escapeHtml(item.abs_path)}" data-is-video="${isV ? '1' : '0'}" data-filename="${escapeHtml(item.filename)}">
+                <div class="person-media-thumb-wrap">
+                  <img src="${thumbUrl}" class="person-media-thumb" loading="lazy" alt="${escapeHtml(item.filename)}" onerror="if (this.dataset.fb !== '1' && '${faceThumbUrl}') { this.dataset.fb = '1'; this.src = '${faceThumbUrl}'; } else { this.src = 'icons/app_icon.png'; }">
+                  ${faceThumbUrl ? `
+                    <img src="${faceThumbUrl}" style="position:absolute; top:8px; left:8px; width:34px; height:34px; border-radius:50%; border:2px solid var(--accent-cyan); object-fit:cover; z-index:3; box-shadow:0 2px 8px rgba(0,0,0,0.85);" title="Face appearance">
+                  ` : ''}
+                  ${isV ? `<div class="face-timecode-badge">▶ ${timecodeStr}</div>` : ''}
+                  ${isCurrentFile ? `<div style="position:absolute; top:8px; right:8px; background:var(--accent-cyan); color:#000; font-size:10px; font-weight:700; padding:2px 6px; border-radius:4px; z-index:3;">This File</div>` : ''}
+                </div>
+                <div style="padding: 10px 12px; display:flex; flex-direction:column; gap:4px;">
+                  <div style="font-size:12px; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(item.filename)}">
+                    ${escapeHtml(item.filename)}
+                  </div>
+                  <div style="font-size:11px; color:var(--text-muted); display:flex; justify-content:space-between;">
+                    <span>${item.source_label || 'Drive'}</span>
+                    <span>${formatBytes(item.size_bytes)}</span>
+                  </div>
+                  <div style="display:flex; gap:6px; margin-top:6px;">
+                    <button class="btn btn-secondary btn-sm btn-card-play" style="flex:1; font-size:10px; padding:3px 6px;">
+                      ${isV ? '▶ Play' : '👁️ View'}
+                    </button>
+                    <button class="btn btn-secondary btn-sm btn-card-reveal" style="font-size:10px; padding:3px 6px;" title="Reveal in File Explorer">📂</button>
+                  </div>
+                </div>
+              </div>
+            `;
+          }).join('');
+        }
+
+        return `
+          <div id="grouped-person-${person.person_id}" style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: 10px; padding: 16px; display:flex; flex-direction:column; gap: 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 10px;">
+              <div style="display: flex; align-items: center; gap: 12px; cursor: pointer;" onclick="openPersonDetail(${person.person_id})">
+                ${avatarUrl ? `
+                  <img src="${avatarUrl}" alt="${escapeHtml(pName)}" style="width: 44px; height: 44px; border-radius: 50%; object-fit: cover; border: 2px solid var(--accent-cyan);">
+                ` : `
+                  <div style="width: 44px; height: 44px; border-radius: 50%; background: #334155; display:flex; align-items:center; justify-content:center; font-size: 18px;">👤</div>
+                `}
+                <div>
+                  <div style="font-size: 15px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 6px;">
+                    <span>${escapeHtml(pName)}</span>
+                    <span class="person-card-badge ${isNamed ? 'named' : ''}" style="font-size: 10px; padding: 1px 6px;">${isNamed ? 'Named Person' : 'Unnamed Cluster'}</span>
+                  </div>
+                  <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
+                    ${appearances} total appearance${appearances !== 1 ? 's' : ''} across ${photoCnt} photo${photoCnt !== 1 ? 's' : ''} &bull; ${videoCnt} video${videoCnt !== 1 ? 's' : ''}
+                  </div>
+                </div>
+              </div>
+
+              <div style="display: flex; gap: 8px;">
+                <button class="btn btn-secondary btn-sm" style="font-size: 11px; padding: 4px 10px;" onclick="openPersonDetail(${person.person_id})">
+                  👤 View Profile
+                </button>
+                <button class="btn btn-secondary btn-sm" style="font-size: 11px; padding: 4px 10px; color: var(--accent-cyan); border-color: rgba(6,182,212,0.3);" onclick="startTargetScan(${person.person_id}, '${escapeHtml(pName).replace(/'/g, "\\'")}')">
+                  🎯 Hunt Everywhere
+                </button>
+              </div>
+            </div>
+
+            <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;">
+              Grouped Media (${person.media ? person.media.length : 0} items):
+            </div>
+            <div class="person-gallery-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px;">
+              ${mediaCardsHtml || '<div style="color:var(--text-muted); font-size:12px;">No other media found for this person</div>'}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    fileCard.innerHTML = `
+      ${headerHtml}
+      ${facesSectionHtml}
+      <div style="display: flex; flex-direction: column; gap: 14px; margin-top: 4px;">
+        <div style="font-size: 13px; font-weight: 700; color: #fff; text-transform: uppercase; letter-spacing: 0.5px;">
+          👥 Grouped Media for Same Faces Found in "${escapeHtml(fileItem.filename)}":
+        </div>
+        ${peopleSectionsHtml || '<div style="color:var(--text-muted); font-size:12px;">No people linked to these faces</div>'}
+      </div>
+    `;
+
+    // Hook up play / reveal for file header
+    const btnPlayMain = fileCard.querySelector('.btn-inspect-play');
+    if (btnPlayMain) {
+      btnPlayMain.addEventListener('click', () => {
+        if (isVideo) {
+          showToast(`Launching system player for "${fileItem.filename}"...`, 'info');
+          fetch(`${API_BASE}/api/files/open-system`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file_id: fileItem.file_id, path: fileItem.abs_path })
+          });
+        } else {
+          openPhotoPreview(fileItem, [fileItem]);
+        }
+      });
+    }
+
+    const btnRevealMain = fileCard.querySelector('.btn-inspect-reveal');
+    if (btnRevealMain) {
+      btnRevealMain.addEventListener('click', () => {
+        openFileLocation(fileItem.abs_path, false);
+      });
+    }
+
+    // Hook up face chips clicking to jump to person section
+    fileCard.querySelectorAll('.file-face-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const pId = chip.dataset.personId;
+        if (pId) {
+          const targetSection = document.getElementById(`grouped-person-${pId}`);
+          if (targetSection) {
+            targetSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            targetSection.style.borderColor = 'var(--accent-cyan)';
+            setTimeout(() => { targetSection.style.borderColor = 'var(--border-color)'; }, 2000);
+          }
+        }
+      });
+    });
+
+    // Hook up media cards inside this fileCard
+    fileCard.querySelectorAll('.person-media-card').forEach(mCard => {
+      const fId = parseInt(mCard.dataset.fileId, 10);
+      const isV = mCard.dataset.isVideo === '1';
+      const absPath = mCard.dataset.absPath;
+      const fn = mCard.dataset.filename;
+
+      const handlePlay = () => {
+        if (isV) {
+          showToast(`Launching system player for "${fn}"...`, 'info');
+          fetch(`${API_BASE}/api/files/open-system`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file_id: fId, path: absPath })
+          });
+        } else {
+          openPhotoPreview({ file_id: fId, abs_path: absPath, filename: fn, media_type: 'photo' }, null);
+        }
+      };
+
+      const btnPlay = mCard.querySelector('.btn-card-play');
+      if (btnPlay) {
+        btnPlay.addEventListener('click', (e) => {
+          e.stopPropagation();
+          handlePlay();
+        });
+      }
+
+      const thumbWrap = mCard.querySelector('.person-media-thumb-wrap');
+      if (thumbWrap) {
+        thumbWrap.addEventListener('click', (e) => {
+          e.stopPropagation();
+          handlePlay();
+        });
+      }
+
+      const btnRev = mCard.querySelector('.btn-card-reveal');
+      if (btnRev) {
+        btnRev.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openFileLocation(absPath, false);
+        });
+      }
+    });
+
+    container.appendChild(fileCard);
+  });
+}
+
 function updateMergeToolbar() {
   const toolbar = document.getElementById('faces-merge-toolbar');
   const lblCount = document.getElementById('lbl-faces-selected-count');
@@ -6261,11 +6632,81 @@ async function checkFaceScanStatus() {
 // Setup Event Listeners for People & Faces
 function setupFacesEventListeners() {
   // Scope / filter selectors change
-  const selectors = ['sel-faces-source', 'sel-faces-folder', 'sel-faces-filter', 'sel-faces-sort', 'sel-faces-media-type'];
+  const selectors = ['sel-faces-source', 'sel-faces-folder', 'sel-faces-filter', 'sel-faces-media-type'];
   selectors.forEach(id => {
     const el = document.getElementById(id);
-    if (el) el.addEventListener('change', () => loadFacesCatalog());
+    if (el) el.addEventListener('change', () => {
+      const txt = document.getElementById('txt-faces-file-search');
+      if (txt && txt.value.trim()) {
+        searchFacesByFilename(txt.value.trim());
+      } else {
+        loadFacesCatalog();
+      }
+    });
   });
+
+  const selSort = document.getElementById('sel-faces-sort');
+  if (selSort) {
+    selSort.addEventListener('change', () => {
+      if (selSort.value === 'file_lookup') {
+        const txt = document.getElementById('txt-faces-file-search');
+        if (txt) {
+          txt.focus();
+          txt.select();
+        }
+        showToast('Type a file name in the search bar above to inspect faces', 'info');
+      } else {
+        const txt = document.getElementById('txt-faces-file-search');
+        if (txt && txt.value.trim()) {
+          window.clearFacesFileSearchGlobal();
+        } else {
+          loadFacesCatalog();
+        }
+      }
+    });
+  }
+
+  // File Name Search & Face Inspection
+  const txtFileSearch = document.getElementById('txt-faces-file-search');
+  const btnFileSearch = document.getElementById('btn-faces-file-search');
+  const btnClearFileSearch = document.getElementById('btn-clear-faces-file-search');
+  const btnResetFileSearch = document.getElementById('btn-reset-faces-file-search');
+
+  if (txtFileSearch) {
+    txtFileSearch.addEventListener('input', () => {
+      const val = txtFileSearch.value.trim();
+      if (btnClearFileSearch) {
+        btnClearFileSearch.style.display = val ? 'block' : 'none';
+      }
+    });
+
+    txtFileSearch.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const val = txtFileSearch.value.trim();
+        if (val) {
+          searchFacesByFilename(val);
+        } else {
+          window.clearFacesFileSearchGlobal();
+        }
+      }
+    });
+  }
+
+  if (btnFileSearch) {
+    btnFileSearch.addEventListener('click', () => {
+      const val = txtFileSearch ? txtFileSearch.value.trim() : '';
+      if (val) {
+        searchFacesByFilename(val);
+      } else {
+        txtFileSearch?.focus();
+        showToast('Please type a file name to inspect faces', 'info');
+      }
+    });
+  }
+
+  if (btnClearFileSearch) btnClearFileSearch.addEventListener('click', window.clearFacesFileSearchGlobal);
+  if (btnResetFileSearch) btnResetFileSearch.addEventListener('click', window.clearFacesFileSearchGlobal);
 
   // Targeted hunt button in person detail modal
   const btnFindEverywhere = document.getElementById('btn-person-find-everywhere');

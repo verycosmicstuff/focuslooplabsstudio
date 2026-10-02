@@ -6,7 +6,7 @@ import subprocess
 import threading
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, UploadFile, File, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -1873,6 +1873,24 @@ async def api_upload_and_find_face(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error in upload-and-find: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/faces/by-file")
+def api_get_faces_by_file(
+    query: str = Query(..., description="Filename or partial path to inspect"),
+    source_id: Optional[int] = Query(None),
+    media_type: str = Query("all"),
+    limit: int = Query(10, ge=1, le=50)
+):
+    try:
+        return face_engine.get_faces_by_filename(
+            query=query,
+            limit=limit,
+            source_id=source_id,
+            media_type=media_type
+        )
+    except Exception as e:
+        logger.error(f"Error searching faces by file '{query}': {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/faces/people/{person_id}")
