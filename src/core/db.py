@@ -146,6 +146,28 @@ def init_db():
     );
 
     CREATE INDEX IF NOT EXISTS idx_sync_hash ON sync_records(fast_hash);
+
+    CREATE TABLE IF NOT EXISTS file_tags (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+        tag TEXT NOT NULL,
+        category TEXT DEFAULT 'general', -- 'general', 'speaker', 'topic', 'mention'
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(file_id, tag, category)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_file_tags_tag ON file_tags(tag);
+    CREATE INDEX IF NOT EXISTS idx_file_tags_category ON file_tags(category);
+    CREATE INDEX IF NOT EXISTS idx_file_tags_file ON file_tags(file_id);
+
+    CREATE TABLE IF NOT EXISTS media_notes (
+        file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+        notes TEXT DEFAULT '',
+        rating INTEGER DEFAULT 0,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_media_notes_file ON media_notes(file_id);
     """)
 
     # Column migration: ensure excluded_paths, volume_uuid, and alternate_paths exist in sources

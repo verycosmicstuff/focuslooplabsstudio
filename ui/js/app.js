@@ -227,7 +227,8 @@ document.querySelectorAll('.nav-item').forEach(item => {
       transcoder: 'GPU-Accelerated H.265 Transcoder (NVENC)',
       sync: 'Primary & Backup Directory Sync Matrix',
       organizer: 'Smart Media Organizer',
-      proofing: 'Client Proofing, Watermarking & Selects'
+      proofing: 'Client Proofing, Watermarking & Selects',
+      tags: 'Media Tags, Speakers & Catalog Manager'
     };
     document.getElementById('current-view-title').innerText = titles[currentTab] || 'SaveSpace Pro';
     refreshCurrentTab();
@@ -280,6 +281,7 @@ function refreshCurrentTab() {
   else if (currentTab === 'sync') loadSync();
   else if (currentTab === 'organizer') loadOrganizer();
   else if (currentTab === 'proofing') loadProofing();
+  else if (currentTab === 'tags') loadTagsCatalog();
 }
 
 async function loadOverview() {
@@ -4384,3 +4386,1132 @@ window.addEventListener('keydown', (e) => {
     modal.classList.remove('active');
   }
 });
+
+// ==========================================================================
+// Media Tags, Speakers, Topics & Catalog Controller
+// ==========================================================================
+
+let tagsCatalogItems = [];
+let selectedTagFileIds = new Set();
+let activeTagFilter = null; // { tag: "...", category: "..." }
+let tagsPagination = { limit: 48, offset: 0, total: 0 };
+let tagsAllMetadata = { all: [], speakers: [], topics: [], mentions: [], general: [], total_unique: 0 };
+let tagsViewMode = 'grid'; // 'grid' | 'list'
+let activeInspectorIndex = -1;
+let activeInspectorItem = null;
+let isTagsEventsBound = false;
+
+function formatDurationDisplay(sec) {
+  if (!sec || isNaN(sec) || sec <= 0) return '';
+  const total = Math.round(sec);
+  const hrs = Math.floor(total / 3600);
+  const mins = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if (hrs > 0) {
+    return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+async function loadTagsCatalog(resetPage = false) {
+  initTagsEventsOnce();
+  if (resetPage) {
+    tagsPagination.offset = 0;
+  }
+
+  const selSource = document.getElementById('sel-tags-source');
+  const selFolder = document.getElementById('sel-tags-folder');
+  const selType = document.getElementById('sel-tags-media-type');
+  const selStatus = document.getElementById('sel-tags-status');
+  const txtSearch = document.getElementById('txt-tags-search');
+  const selSort = document.getElementById('sel-tags-sort');
+
+  const params = new URLSearchParams();
+  if (selSource && selSource.value) params.append('source_id', selSource.value);
+  if (selFolder && selFolder.value) params.append('folder', selFolder.value);
+  if (selType && selType.value) params.append('media_type', selType.value);
+  if (selStatus && selStatus.value) params.append('tag_status', selStatus.value);
+  if (txtSearch && txtSearch.value.trim()) params.append('search', txtSearch.value.trim());
+  if (selSort && selSort.value) params.append('sort_by', selSort.value);
+
+  if (activeTagFilter) {
+    params.append('tag', activeTagFilter.tag);
+    if (activeTagFilter.category) params.append('category', activeTagFilter.category);
+  }
+
+  params.append('limit', tagsPagination.limit);
+  params.append('offset', tagsPagination.offset);
+
+  const container = document.getElementById('tags-catalog-container');
+  if (container) {
+    container.style.opacity = '0.6';
+  }
+
+  try {
+    const res = await fetch(API_BASE + '/api/tags/catalog?' + params.toString());
+    const data = await res.json();
+
+    tagsCatalogItems = data.items || [];
+    tagsPagination.total = data.total_count || 0;
+
+    // Update counts & stats badge
+    const lblFiltered = document.getElementById('lbl-tags-filtered-count');
+    if (lblFiltered) lblFiltered.innerText = tagsPagination.total.toLocaleString();
+
+    const lblStats = document.getElementById('lbl-tags-stats-badge');
+    if (lblStats) {
+      lblStats.innerText = `${data.tagged_count || 0} tagged • ${data.untagged_count || 0} untagged`;
+    }
+
+    // Pagination info
+    const pageInfo = document.getElementById('lbl-tags-page-info');
+    if (pageInfo) {
+      if (tagsPagination.total === 0) {
+        pageInfo.innerText = '0 items found';
+      } else {
+        const start = tagsPagination.offset + 1;
+        const end = Math.min(tagsPagination.offset + tagsCatalogItems.length, tagsPagination.total);
+        pageInfo.innerText = `Showing ${start} - ${end} of ${tagsPagination.total.toLocaleString()} items`;
+      }
+    }
+
+    const btnPrev = document.getElementById('btn-tags-prev-page');
+    const btnNext = document.getElementById('btn-tags-next-page');
+    if (btnPrev) btnPrev.disabled = tagsPagination.offset === 0;
+    if (btnNext) btnNext.disabled = tagsPagination.offset + tagsCatalogItems.length >= tagsPagination.total;
+
+    renderTagsCatalog();
+    updateTagsSelectionBar();
+  } catch (err) {
+    console.error('Failed to load tags catalog:', err);
+    showToast('Failed to load media catalog: ' + err, 'error');
+  } finally {
+    if (container) container.style.opacity = '1';
+  }
+
+  // Load dropdowns and metadata in parallel
+  loadTagsSourcesDropdown();
+  loadTagsFolderDropdown();
+  loadTagsAllMetadata();
+}
+
+async function loadTagsSourcesDropdown() {
+  const selSource = document.getElementById('sel-tags-source');
+  if (!selSource) return;
+
+  const currentVal = selSource.value;
+  if (!sourcesData || sourcesData.length === 0) {
+    try {
+      const res = await fetch(API_BASE + '/api/sources');
+      sourcesData = await res.json();
+    } catch (e) {
+      return;
+    }
+  }
+
+  const existingOpts = Array.from(selSource.options).map(o => o.value);
+  sourcesData.forEach(s => {
+    const sId = String(s.id);
+    if (!existingOpts.includes(sId)) {
+      const opt = document.createElement('option');
+      opt.value = sId;
+      opt.textContent = `💽 ${s.label} (${s.path})`;
+      selSource.appendChild(opt);
+    }
+  });
+
+  if (currentVal && existingOpts.includes(currentVal)) {
+    selSource.value = currentVal;
+  }
+}
+
+async function loadTagsFolderDropdown() {
+  const selFolder = document.getElementById('sel-tags-folder');
+  const selSource = document.getElementById('sel-tags-source');
+  if (!selFolder) return;
+
+  const currentVal = selFolder.value;
+  const sourceId = selSource ? selSource.value : '';
+
+  try {
+    const res = await fetch(API_BASE + '/api/tags/folders' + (sourceId ? `?source_id=${sourceId}` : ''));
+    const data = await res.json();
+    const folders = data.folders || [];
+
+    selFolder.innerHTML = '<option value="">📁 All Folders & Subfolders</option>';
+    folders.forEach(f => {
+      const opt = document.createElement('option');
+      opt.value = f.path;
+      opt.textContent = `📁 ${f.name} (${f.file_count} files) [${f.source_label}]`;
+      selFolder.appendChild(opt);
+    });
+
+    if (currentVal) {
+      selFolder.value = currentVal;
+    }
+  } catch (e) {
+    console.warn('Failed to load folder list:', e);
+  }
+}
+
+async function loadTagsAllMetadata() {
+  try {
+    const res = await fetch(API_BASE + '/api/tags/all');
+    tagsAllMetadata = await res.json();
+    renderTagsCloud();
+  } catch (e) {
+    console.warn('Failed to load all tags metadata:', e);
+  }
+}
+
+function renderTagsCloud() {
+  const cloudWrap = document.getElementById('tags-cloud-pills');
+  const btnClear = document.getElementById('btn-clear-active-tag-filter');
+  if (!cloudWrap) return;
+
+  if (activeTagFilter) {
+    if (btnClear) {
+      btnClear.style.display = 'inline-flex';
+      btnClear.innerText = `✕ Filter: ${activeTagFilter.tag}`;
+    }
+  } else {
+    if (btnClear) btnClear.style.display = 'none';
+  }
+
+  cloudWrap.innerHTML = '';
+
+  const allList = tagsAllMetadata.all || [];
+  if (allList.length === 0) {
+    cloudWrap.innerHTML = '<span style="color:var(--text-muted); font-size:11px;">No tags created yet. Click "Inspect & Edit" or "Batch Tag" to tag videos.</span>';
+    return;
+  }
+
+  // Display top tags prioritized by category
+  allList.slice(0, 16).forEach(t => {
+    const chip = document.createElement('span');
+    let catClass = 'tag-pill-general';
+    let icon = '🏷️';
+    if (t.category === 'speaker') {
+      catClass = 'tag-pill-speaker';
+      icon = '🎙️';
+    } else if (t.category === 'topic') {
+      catClass = 'tag-pill-topic';
+      icon = '💡';
+    } else if (t.category === 'mention') {
+      catClass = 'tag-pill-mention';
+      icon = '📌';
+    }
+
+    const isActive = activeTagFilter && activeTagFilter.tag.toLowerCase() === t.tag.toLowerCase();
+    chip.className = `tag-pill ${catClass} clickable ${isActive ? 'active-filter' : ''}`;
+    chip.innerHTML = `${icon} ${escapeHtml(t.tag)} <span style="opacity:0.75; font-size:10px;">(${t.count})</span>`;
+    chip.title = `Filter by ${t.category}: "${t.tag}"`;
+
+    chip.addEventListener('click', () => {
+      if (isActive) {
+        activeTagFilter = null;
+      } else {
+        activeTagFilter = { tag: t.tag, category: t.category };
+      }
+      loadTagsCatalog(true);
+    });
+
+    cloudWrap.appendChild(chip);
+  });
+}
+
+function renderTagsCatalog() {
+  const container = document.getElementById('tags-catalog-container');
+  const emptyPlaceholder = document.getElementById('tags-empty-placeholder');
+  if (!container) return;
+
+  if (tagsCatalogItems.length === 0) {
+    container.style.display = 'none';
+    if (emptyPlaceholder) emptyPlaceholder.style.display = 'block';
+    return;
+  }
+
+  if (emptyPlaceholder) emptyPlaceholder.style.display = 'none';
+  container.style.display = tagsViewMode === 'list' ? 'flex' : 'grid';
+  container.className = tagsViewMode === 'list' ? 'tags-list-view' : 'tags-grid-view';
+  container.innerHTML = '';
+
+  tagsCatalogItems.forEach((item, index) => {
+    const isChecked = selectedTagFileIds.has(item.id);
+
+    if (tagsViewMode === 'list') {
+      // List Row View
+      const row = document.createElement('div');
+      row.className = `tag-list-row ${isChecked ? 'selected' : ''}`;
+      row.dataset.fileId = item.id;
+
+      const durStr = formatDurationDisplay(item.duration_sec);
+      const isVideo = item.media_type === 'video';
+
+      let pillsHtml = '';
+      if (item.tags && item.tags.length > 0) {
+        pillsHtml = item.tags.map(t => {
+          let cClass = 'tag-pill-general';
+          let icon = '🏷️';
+          if (t.category === 'speaker') { cClass = 'tag-pill-speaker'; icon = '🎙️'; }
+          else if (t.category === 'topic') { cClass = 'tag-pill-topic'; icon = '💡'; }
+          else if (t.category === 'mention') { cClass = 'tag-pill-mention'; icon = '📌'; }
+          return `<span class="tag-pill ${cClass}">${icon} ${escapeHtml(t.tag)}</span>`;
+        }).join(' ');
+      } else {
+        pillsHtml = `<span class="tag-pill tag-pill-untagged">⚠️ Untagged</span>`;
+      }
+
+      row.innerHTML = `
+        <input type="checkbox" class="tag-row-checkbox" style="cursor:pointer; accent-color:var(--accent-cyan);" ${isChecked ? 'checked' : ''}>
+        <div style="width: 50px; height: 36px; background:#000; border-radius:4px; overflow:hidden; flex-shrink:0; cursor:pointer;" class="btn-inspect-trigger">
+          <img src="${API_BASE}/api/thumbnail/${item.id}" alt="" style="width:100%; height:100%; object-fit:cover;" onerror="this.style.display='none'">
+        </div>
+        <div style="min-width: 220px; max-width: 340px;">
+          <div style="font-size:13px; font-weight:600; color:#fff; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" class="btn-inspect-trigger" title="${escapeHtml(item.filename)}">
+            ${escapeHtml(item.filename)}
+          </div>
+          <div style="font-size:11px; color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+            📁 ${escapeHtml(item.folder_name)} &bull; ${formatBytes(item.size_bytes)} ${durStr ? '&bull; ⏱️ ' + durStr : ''}
+          </div>
+        </div>
+        <div style="flex:1; display:flex; flex-wrap:wrap; gap:4px; align-items:center;">
+          ${pillsHtml}
+        </div>
+        ${item.notes ? `<div style="font-size:11px; color:#cbd5e1; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; background:rgba(0,0,0,0.3); padding:3px 6px; border-radius:4px;" title="${escapeHtml(item.notes)}">📝 ${escapeHtml(item.notes)}</div>` : ''}
+        <div style="display:flex; gap:6px; flex-shrink:0;">
+          <button class="btn btn-secondary btn-sm btn-inspect-action" style="padding:3px 8px; font-size:11px;">👁️ Inspect</button>
+          <button class="btn btn-secondary btn-sm btn-reveal-action" style="padding:3px 8px; font-size:11px;" title="Reveal in File Explorer">📂</button>
+        </div>
+      `;
+
+      const chk = row.querySelector('.tag-row-checkbox');
+      chk?.addEventListener('change', (e) => {
+        if (e.target.checked) selectedTagFileIds.add(item.id);
+        else selectedTagFileIds.delete(item.id);
+        row.classList.toggle('selected', e.target.checked);
+        updateTagsSelectionBar();
+      });
+
+      row.querySelectorAll('.btn-inspect-trigger, .btn-inspect-action').forEach(el => {
+        el.addEventListener('click', () => openTagInspector(item, index));
+      });
+
+      row.querySelector('.btn-reveal-action')?.addEventListener('click', () => {
+        openFileLocation(item.abs_path, false);
+      });
+
+      container.appendChild(row);
+    } else {
+      // Grid Card View
+      const card = document.createElement('div');
+      card.className = `media-tag-card ${isChecked ? 'selected' : ''}`;
+      card.dataset.fileId = item.id;
+
+      const durStr = formatDurationDisplay(item.duration_sec);
+      const isVideo = item.media_type === 'video';
+
+      let pillsHtml = '';
+      if (item.tags && item.tags.length > 0) {
+        const displayTags = item.tags.slice(0, 4);
+        pillsHtml = displayTags.map(t => {
+          let cClass = 'tag-pill-general';
+          let icon = '🏷️';
+          if (t.category === 'speaker') { cClass = 'tag-pill-speaker'; icon = '🎙️'; }
+          else if (t.category === 'topic') { cClass = 'tag-pill-topic'; icon = '💡'; }
+          else if (t.category === 'mention') { cClass = 'tag-pill-mention'; icon = '📌'; }
+          return `<span class="tag-pill ${cClass}">${icon} ${escapeHtml(t.tag)}</span>`;
+        }).join('');
+        if (item.tags.length > 4) {
+          pillsHtml += `<span class="tag-pill tag-pill-general" style="opacity:0.75;">+${item.tags.length - 4}</span>`;
+        }
+      } else {
+        pillsHtml = `<span class="tag-pill tag-pill-untagged">⚠️ Untagged</span>`;
+      }
+
+      let starHtml = '';
+      if (item.rating && item.rating > 0) {
+        starHtml = `<span style="color:#fbbf24; font-size:11px;" title="${item.rating} stars">` + '★'.repeat(item.rating) + '</span>';
+      }
+
+      card.innerHTML = `
+        <div class="card-thumb-wrap btn-inspect-trigger">
+          <input type="checkbox" class="card-checkbox" ${isChecked ? 'checked' : ''} onclick="event.stopPropagation()">
+          <img src="${API_BASE}/api/thumbnail/${item.id}" alt="${escapeHtml(item.filename)}" loading="lazy" onerror="this.src='icons/app_icon.png'; this.style.objectFit='contain';">
+          <div class="card-badge-type">
+            <span>${isVideo ? '🎬 VIDEO' : '📷 PHOTO'}</span>
+          </div>
+          ${durStr ? `<div class="card-badge-dur">▶ ${durStr}</div>` : ''}
+        </div>
+        <div class="card-body">
+          <div class="card-title btn-inspect-trigger" title="${escapeHtml(item.filename)}">
+            ${escapeHtml(item.filename)}
+          </div>
+          <div class="card-location" title="${escapeHtml(item.folder_path)}">
+            <span style="color:var(--accent-cyan); font-weight:600;">[${escapeHtml(item.source_label)}]</span>
+            <span>📁 ${escapeHtml(item.folder_name)}</span>
+            <span style="margin-left:auto; color:var(--text-muted); font-size:10px;">${formatBytes(item.size_bytes)}</span>
+          </div>
+          <div class="card-tags-wrap">
+            ${pillsHtml}
+          </div>
+          ${item.notes ? `<div class="card-notes-snippet" title="${escapeHtml(item.notes)}">📝 ${escapeHtml(item.notes)}</div>` : ''}
+          <div class="card-footer">
+            <div style="display:flex; align-items:center; gap:6px;">
+              ${starHtml}
+            </div>
+            <div style="display:flex; gap:4px;">
+              <button class="btn btn-secondary btn-sm btn-inspect-action" style="padding:3px 8px; font-size:11px;" title="Inspect and edit tags">👁️ Inspect</button>
+              <button class="btn btn-secondary btn-sm btn-system-play" style="padding:3px 7px; font-size:11px;" title="Play in VLC / OS Player">▶</button>
+              <button class="btn btn-secondary btn-sm btn-reveal-action" style="padding:3px 7px; font-size:11px;" title="Reveal in File Explorer">📂</button>
+            </div>
+          </div>
+        </div>
+      `;
+
+      const chk = card.querySelector('.card-checkbox');
+      chk?.addEventListener('change', (e) => {
+        if (e.target.checked) selectedTagFileIds.add(item.id);
+        else selectedTagFileIds.delete(item.id);
+        card.classList.toggle('selected', e.target.checked);
+        updateTagsSelectionBar();
+      });
+
+      card.querySelectorAll('.btn-inspect-trigger, .btn-inspect-action').forEach(el => {
+        el.addEventListener('click', () => openTagInspector(item, index));
+      });
+
+      card.querySelector('.btn-system-play')?.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          await fetch(API_BASE + '/api/files/open-system', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file_id: item.id })
+          });
+          showToast(`Opening "${item.filename}" in player...`, 'info');
+        } catch (err) {
+          showToast('Failed to launch player: ' + err, 'error');
+        }
+      });
+
+      card.querySelector('.btn-reveal-action')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openFileLocation(item.abs_path, false);
+      });
+
+      container.appendChild(card);
+    }
+  });
+}
+
+function updateTagsSelectionBar() {
+  const count = selectedTagFileIds.size;
+  const btnBatch = document.getElementById('btn-open-batch-tag-modal');
+  const btnReveal = document.getElementById('btn-batch-reveal-explorer');
+  const btnDeselect = document.getElementById('btn-tags-select-none');
+  const lblSummary = document.getElementById('lbl-tags-selection-summary');
+  const chkAll = document.getElementById('chk-tags-select-all');
+
+  document.querySelectorAll('.badge-sel-count').forEach(el => el.innerText = count);
+  if (lblSummary) lblSummary.innerText = `${count} selected`;
+
+  if (btnBatch) btnBatch.disabled = count === 0;
+  if (btnReveal) btnReveal.disabled = count === 0;
+  if (btnDeselect) btnDeselect.style.display = count > 0 ? 'inline-flex' : 'none';
+
+  if (chkAll) {
+    const pageIds = tagsCatalogItems.map(i => i.id);
+    const allOnPageSelected = pageIds.length > 0 && pageIds.every(id => selectedTagFileIds.has(id));
+    chkAll.checked = allOnPageSelected;
+  }
+}
+
+// --------------------------------------------------------------------------
+// Inspector Modal
+// --------------------------------------------------------------------------
+
+function openTagInspector(item, index) {
+  activeInspectorItem = item;
+  activeInspectorIndex = index;
+
+  const modal = document.getElementById('modal-tag-inspector');
+  if (!modal) return;
+
+  const counterEl = document.getElementById('insp-counter-badge');
+  if (counterEl) counterEl.innerText = `Item ${index + 1} of ${tagsCatalogItems.length}`;
+
+  const typeEl = document.getElementById('insp-media-type-badge');
+  if (typeEl) typeEl.innerText = (item.media_type || 'MEDIA').toUpperCase();
+
+  const filenameEl = document.getElementById('insp-filename');
+  if (filenameEl) filenameEl.innerText = item.filename;
+
+  // Media Player
+  const videoEl = document.getElementById('insp-video-player');
+  const photoEl = document.getElementById('insp-photo-player');
+  const fallbackEl = document.getElementById('insp-player-fallback');
+
+  if (item.media_type === 'video') {
+    if (photoEl) photoEl.style.display = 'none';
+    if (fallbackEl) fallbackEl.style.display = 'none';
+    if (videoEl) {
+      videoEl.style.display = 'block';
+      videoEl.src = API_BASE + '/api/media/stream/' + item.id;
+      videoEl.load();
+    }
+  } else {
+    if (videoEl) {
+      videoEl.pause();
+      videoEl.src = '';
+      videoEl.style.display = 'none';
+    }
+    if (photoEl) {
+      photoEl.style.display = 'block';
+      photoEl.src = API_BASE + '/api/preview_by_path?path=' + encodeURIComponent(item.abs_path);
+    }
+  }
+
+  // Tech Specs
+  const durStr = formatDurationDisplay(item.duration_sec);
+  const specDur = document.getElementById('insp-spec-duration');
+  if (specDur) specDur.innerText = durStr ? `${durStr} (${Math.round(item.duration_sec)}s)` : '-';
+
+  const specRes = document.getElementById('insp-spec-res');
+  if (specRes) specRes.innerText = (item.width && item.height) ? `${item.width} × ${item.height}` : '-';
+
+  const specCodec = document.getElementById('insp-spec-codec');
+  if (specCodec) specCodec.innerText = (item.video_codec || item.camera_model || item.ext).toUpperCase();
+
+  const specSize = document.getElementById('insp-spec-size');
+  if (specSize) specSize.innerText = formatBytes(item.size_bytes);
+
+  const specDate = document.getElementById('insp-spec-date');
+  if (specDate) {
+    const d = item.mtime ? new Date(item.mtime * 1000).toLocaleString() : '-';
+    specDate.innerText = d;
+  }
+
+  const specPath = document.getElementById('insp-spec-path');
+  if (specPath) specPath.innerText = item.abs_path;
+
+  // Notes & Star Rating
+  const txtNotes = document.getElementById('txt-insp-notes');
+  if (txtNotes) txtNotes.value = item.notes || '';
+
+  renderInspectorStars(item.rating || 0);
+
+  // Tags Chips & Suggestions
+  renderInspectorChips();
+  renderInspectorSuggestions();
+
+  // Hide save status
+  const saveStatus = document.getElementById('insp-save-status');
+  if (saveStatus) saveStatus.style.display = 'none';
+
+  // Navigation button states
+  const btnPrev = document.getElementById('btn-insp-prev');
+  const btnNext = document.getElementById('btn-insp-next');
+  if (btnPrev) btnPrev.disabled = index <= 0;
+  if (btnNext) btnNext.disabled = index >= tagsCatalogItems.length - 1;
+
+  modal.classList.add('active');
+}
+
+function renderInspectorStars(ratingVal) {
+  document.querySelectorAll('#insp-star-rating .star-btn').forEach(star => {
+    const v = parseInt(star.dataset.val, 10);
+    star.classList.toggle('active', v <= ratingVal);
+  });
+}
+
+function renderInspectorChips() {
+  if (!activeInspectorItem) return;
+
+  const tags = activeInspectorItem.tags || [];
+
+  const contSpeaker = document.getElementById('insp-chips-speaker');
+  const contTopic = document.getElementById('insp-chips-topic');
+  const contMention = document.getElementById('insp-chips-mention');
+  const contGeneral = document.getElementById('insp-chips-general');
+
+  if (contSpeaker) contSpeaker.innerHTML = '';
+  if (contTopic) contTopic.innerHTML = '';
+  if (contMention) contMention.innerHTML = '';
+  if (contGeneral) contGeneral.innerHTML = '';
+
+  tags.forEach(t => {
+    const pill = document.createElement('span');
+    const cat = t.category || 'general';
+    let targetCont = contGeneral;
+    let pillClass = 'tag-pill-general';
+    let icon = '🏷️';
+
+    if (cat === 'speaker') {
+      targetCont = contSpeaker;
+      pillClass = 'tag-pill-speaker';
+      icon = '🎙️';
+    } else if (cat === 'topic') {
+      targetCont = contTopic;
+      pillClass = 'tag-pill-topic';
+      icon = '💡';
+    } else if (cat === 'mention') {
+      targetCont = contMention;
+      pillClass = 'tag-pill-mention';
+      icon = '📌';
+    }
+
+    pill.className = `tag-pill ${pillClass}`;
+    pill.innerHTML = `<span>${icon} ${escapeHtml(t.tag)}</span><span class="remove-tag" title="Remove tag">&times;</span>`;
+
+    pill.querySelector('.remove-tag').addEventListener('click', () => {
+      removeInspectorTag(t.tag, cat);
+    });
+
+    if (targetCont) targetCont.appendChild(pill);
+  });
+}
+
+function renderInspectorSuggestions() {
+  if (!activeInspectorItem) return;
+  const currentTagSet = new Set((activeInspectorItem.tags || []).map(t => t.tag.toLowerCase()));
+
+  const suggSpeaker = document.getElementById('insp-sugg-speaker');
+  const suggTopic = document.getElementById('insp-sugg-topic');
+  const suggMention = document.getElementById('insp-sugg-mention');
+
+  if (suggSpeaker) suggSpeaker.innerHTML = '';
+  if (suggTopic) suggTopic.innerHTML = '';
+  if (suggMention) suggMention.innerHTML = '';
+
+  (tagsAllMetadata.speakers || []).slice(0, 6).forEach(s => {
+    if (!currentTagSet.has(s.tag.toLowerCase()) && suggSpeaker) {
+      const chip = document.createElement('span');
+      chip.className = 'tag-pill tag-pill-speaker clickable';
+      chip.style.opacity = '0.75';
+      chip.innerHTML = `+ ${escapeHtml(s.tag)}`;
+      chip.addEventListener('click', () => addInspectorTag(s.tag, 'speaker'));
+      suggSpeaker.appendChild(chip);
+    }
+  });
+
+  (tagsAllMetadata.topics || []).slice(0, 6).forEach(tp => {
+    if (!currentTagSet.has(tp.tag.toLowerCase()) && suggTopic) {
+      const chip = document.createElement('span');
+      chip.className = 'tag-pill tag-pill-topic clickable';
+      chip.style.opacity = '0.75';
+      chip.innerHTML = `+ ${escapeHtml(tp.tag)}`;
+      chip.addEventListener('click', () => addInspectorTag(tp.tag, 'topic'));
+      suggTopic.appendChild(chip);
+    }
+  });
+
+  (tagsAllMetadata.mentions || []).slice(0, 6).forEach(m => {
+    if (!currentTagSet.has(m.tag.toLowerCase()) && suggMention) {
+      const chip = document.createElement('span');
+      chip.className = 'tag-pill tag-pill-mention clickable';
+      chip.style.opacity = '0.75';
+      chip.innerHTML = `+ ${escapeHtml(m.tag)}`;
+      chip.addEventListener('click', () => addInspectorTag(m.tag, 'mention'));
+      suggMention.appendChild(chip);
+    }
+  });
+}
+
+async function addInspectorTag(tagName, category = 'general') {
+  if (!activeInspectorItem || !tagName || !tagName.trim()) return;
+  const cleanTag = tagName.trim();
+
+  const tags = activeInspectorItem.tags || [];
+  if (tags.some(t => t.tag.toLowerCase() === cleanTag.toLowerCase() && t.category === category)) {
+    return;
+  }
+
+  try {
+    const res = await fetch(API_BASE + '/api/tags/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file_ids: [activeInspectorItem.id],
+        add_tags: [{ tag: cleanTag, category: category }]
+      })
+    });
+
+    if (res.ok) {
+      tags.push({ tag: cleanTag, category: category });
+      activeInspectorItem.tags = tags;
+      renderInspectorChips();
+      renderInspectorSuggestions();
+      flashInspectorSaved();
+      loadTagsAllMetadata();
+      renderTagsCatalog();
+    }
+  } catch (err) {
+    showToast('Failed to add tag: ' + err, 'error');
+  }
+}
+
+async function removeInspectorTag(tagName, category = 'general') {
+  if (!activeInspectorItem) return;
+
+  try {
+    const res = await fetch(API_BASE + '/api/tags/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file_ids: [activeInspectorItem.id],
+        remove_tags: [{ tag: tagName, category: category }]
+      })
+    });
+
+    if (res.ok) {
+      activeInspectorItem.tags = (activeInspectorItem.tags || []).filter(
+        t => !(t.tag.toLowerCase() === tagName.toLowerCase() && t.category === category)
+      );
+      renderInspectorChips();
+      renderInspectorSuggestions();
+      flashInspectorSaved();
+      loadTagsAllMetadata();
+      renderTagsCatalog();
+    }
+  } catch (err) {
+    showToast('Failed to remove tag: ' + err, 'error');
+  }
+}
+
+async function saveInspectorNotesAndRating() {
+  if (!activeInspectorItem) return;
+
+  const txtNotes = document.getElementById('txt-insp-notes');
+  const notesVal = txtNotes ? txtNotes.value : '';
+  const ratingVal = activeInspectorItem.rating || 0;
+
+  try {
+    const res = await fetch(API_BASE + '/api/tags/notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file_id: activeInspectorItem.id,
+        notes: notesVal,
+        rating: ratingVal
+      })
+    });
+
+    if (res.ok) {
+      activeInspectorItem.notes = notesVal;
+      flashInspectorSaved();
+      renderTagsCatalog();
+      showToast('Saved notes and rating!', 'success');
+    }
+  } catch (err) {
+    showToast('Failed to save notes: ' + err, 'error');
+  }
+}
+
+function flashInspectorSaved() {
+  const saveStatus = document.getElementById('insp-save-status');
+  if (saveStatus) {
+    saveStatus.style.display = 'inline-block';
+    setTimeout(() => {
+      saveStatus.style.display = 'none';
+    }, 2400);
+  }
+}
+
+// --------------------------------------------------------------------------
+// Batch Tag Modal Logic
+// --------------------------------------------------------------------------
+
+function openBatchTagModal() {
+  if (selectedTagFileIds.size === 0) {
+    showToast('Please select at least 1 media file first', 'error');
+    return;
+  }
+
+  const modal = document.getElementById('modal-batch-tag');
+  const countEl = document.getElementById('batch-tag-count');
+  if (countEl) countEl.innerText = selectedTagFileIds.size;
+
+  const txtName = document.getElementById('txt-batch-tag-name');
+  if (txtName) txtName.value = '';
+
+  renderBatchExistingChips();
+  if (modal) modal.classList.add('active');
+}
+
+function renderBatchExistingChips() {
+  const chipsWrap = document.getElementById('batch-existing-chips');
+  const selCat = document.getElementById('sel-batch-category');
+  const txtName = document.getElementById('txt-batch-tag-name');
+  if (!chipsWrap || !selCat) return;
+
+  chipsWrap.innerHTML = '';
+  const cat = selCat.value;
+
+  let pool = tagsAllMetadata.all || [];
+  if (cat === 'speaker') pool = tagsAllMetadata.speakers || [];
+  else if (cat === 'topic') pool = tagsAllMetadata.topics || [];
+  else if (cat === 'mention') pool = tagsAllMetadata.mentions || [];
+
+  pool.slice(0, 15).forEach(t => {
+    const chip = document.createElement('span');
+    chip.className = 'tag-pill tag-pill-general clickable';
+    chip.innerHTML = `${escapeHtml(t.tag)} (${t.count})`;
+    chip.addEventListener('click', () => {
+      if (txtName) txtName.value = t.tag;
+    });
+    chipsWrap.appendChild(chip);
+  });
+}
+
+async function executeBatchTagAction() {
+  if (selectedTagFileIds.size === 0) return;
+
+  const selAction = document.getElementById('sel-batch-action');
+  const selCat = document.getElementById('sel-batch-category');
+  const txtName = document.getElementById('txt-batch-tag-name');
+
+  const action = selAction ? selAction.value : 'add';
+  const category = selCat ? selCat.value : 'general';
+  const tagStr = txtName ? txtName.value.trim() : '';
+
+  if (!tagStr) {
+    showToast('Please enter or select a tag name', 'error');
+    return;
+  }
+
+  const fileIds = Array.from(selectedTagFileIds);
+
+  try {
+    const res = await fetch(API_BASE + '/api/tags/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file_ids: fileIds,
+        action: action,
+        tags: [{ tag: tagStr, category: category }]
+      })
+    });
+
+    const data = await res.json();
+    if (res.ok) {
+      showToast(`${action === 'add' ? 'Added' : 'Removed'} tag "${tagStr}" on ${fileIds.length} files!`, 'success');
+      document.getElementById('modal-batch-tag')?.classList.remove('active');
+      loadTagsCatalog(false);
+      loadTagsAllMetadata();
+    } else {
+      showToast('Batch action failed: ' + (data.detail || 'Error'), 'error');
+    }
+  } catch (err) {
+    showToast('Batch tag action error: ' + err, 'error');
+  }
+}
+
+// --------------------------------------------------------------------------
+// Event Listeners Binding (Initialized Once)
+// --------------------------------------------------------------------------
+
+function initTagsEventsOnce() {
+  if (isTagsEventsBound) return;
+  isTagsEventsBound = true;
+
+  // Filter changes
+  ['sel-tags-source', 'sel-tags-folder', 'sel-tags-media-type', 'sel-tags-status', 'sel-tags-sort'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener('change', () => {
+        loadTagsCatalog(true);
+      });
+    }
+  });
+
+  // Source change reloads folder list
+  const selSource = document.getElementById('sel-tags-source');
+  if (selSource) {
+    selSource.addEventListener('change', () => {
+      loadTagsFolderDropdown();
+    });
+  }
+
+  // Search input with debounce & Enter
+  const txtSearch = document.getElementById('txt-tags-search');
+  const btnClearSearch = document.getElementById('btn-clear-tags-search');
+  const btnSearch = document.getElementById('btn-tags-quick-refresh');
+
+  if (txtSearch) {
+    txtSearch.addEventListener('input', () => {
+      if (btnClearSearch) btnClearSearch.style.display = txtSearch.value ? 'block' : 'none';
+    });
+    txtSearch.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') loadTagsCatalog(true);
+    });
+  }
+
+  if (btnClearSearch) {
+    btnClearSearch.addEventListener('click', () => {
+      if (txtSearch) txtSearch.value = '';
+      btnClearSearch.style.display = 'none';
+      loadTagsCatalog(true);
+    });
+  }
+
+  if (btnSearch) {
+    btnSearch.addEventListener('click', () => loadTagsCatalog(true));
+  }
+
+  // Clear active tag filter pill
+  const btnClearTagFilter = document.getElementById('btn-clear-active-tag-filter');
+  if (btnClearTagFilter) {
+    btnClearTagFilter.addEventListener('click', () => {
+      activeTagFilter = null;
+      loadTagsCatalog(true);
+    });
+  }
+
+  // Reset all filters button
+  const btnResetFilters = document.getElementById('btn-reset-tags-filters');
+  if (btnResetFilters) {
+    btnResetFilters.addEventListener('click', () => {
+      activeTagFilter = null;
+      if (selSource) selSource.value = '';
+      const selFolder = document.getElementById('sel-tags-folder');
+      if (selFolder) selFolder.value = '';
+      const selType = document.getElementById('sel-tags-media-type');
+      if (selType) selType.value = 'all';
+      const selStatus = document.getElementById('sel-tags-status');
+      if (selStatus) selStatus.value = 'all';
+      if (txtSearch) txtSearch.value = '';
+      loadTagsCatalog(true);
+    });
+  }
+
+  // View Mode switches
+  const btnGrid = document.getElementById('btn-tags-view-grid');
+  const btnList = document.getElementById('btn-tags-view-list');
+  if (btnGrid && btnList) {
+    btnGrid.addEventListener('click', () => {
+      tagsViewMode = 'grid';
+      btnGrid.classList.add('active');
+      btnList.classList.remove('active');
+      renderTagsCatalog();
+    });
+    btnList.addEventListener('click', () => {
+      tagsViewMode = 'list';
+      btnList.classList.add('active');
+      btnGrid.classList.remove('active');
+      renderTagsCatalog();
+    });
+  }
+
+  // Select all / none
+  const chkAll = document.getElementById('chk-tags-select-all');
+  if (chkAll) {
+    chkAll.addEventListener('change', (e) => {
+      if (e.target.checked) {
+        tagsCatalogItems.forEach(i => selectedTagFileIds.add(i.id));
+      } else {
+        tagsCatalogItems.forEach(i => selectedTagFileIds.delete(i.id));
+      }
+      renderTagsCatalog();
+      updateTagsSelectionBar();
+    });
+  }
+
+  const btnDeselectAll = document.getElementById('btn-tags-select-none');
+  if (btnDeselectAll) {
+    btnDeselectAll.addEventListener('click', () => {
+      selectedTagFileIds.clear();
+      renderTagsCatalog();
+      updateTagsSelectionBar();
+    });
+  }
+
+  // Pagination buttons
+  const btnPrev = document.getElementById('btn-tags-prev-page');
+  const btnNext = document.getElementById('btn-tags-next-page');
+  if (btnPrev) {
+    btnPrev.addEventListener('click', () => {
+      if (tagsPagination.offset >= tagsPagination.limit) {
+        tagsPagination.offset -= tagsPagination.limit;
+        loadTagsCatalog(false);
+      }
+    });
+  }
+  if (btnNext) {
+    btnNext.addEventListener('click', () => {
+      if (tagsPagination.offset + tagsPagination.limit < tagsPagination.total) {
+        tagsPagination.offset += tagsPagination.limit;
+        loadTagsCatalog(false);
+      }
+    });
+  }
+
+  // Batch Tagging Modal triggers
+  const btnOpenBatch = document.getElementById('btn-open-batch-tag-modal');
+  if (btnOpenBatch) {
+    btnOpenBatch.addEventListener('click', openBatchTagModal);
+  }
+
+  const btnExecuteBatch = document.getElementById('btn-execute-batch-tag');
+  if (btnExecuteBatch) {
+    btnExecuteBatch.addEventListener('click', executeBatchTagAction);
+  }
+
+  const selBatchCat = document.getElementById('sel-batch-category');
+  if (selBatchCat) {
+    selBatchCat.addEventListener('change', renderBatchExistingChips);
+  }
+
+  // Batch Reveal in File Explorer
+  const btnBatchReveal = document.getElementById('btn-batch-reveal-explorer');
+  if (btnBatchReveal) {
+    btnBatchReveal.addEventListener('click', () => {
+      if (selectedTagFileIds.size === 0) return;
+      const firstId = Array.from(selectedTagFileIds)[0];
+      const match = tagsCatalogItems.find(i => i.id === firstId);
+      if (match) {
+        openFileLocation(match.abs_path, false);
+      }
+    });
+  }
+
+  // Inspector Prev / Next
+  const btnInspPrev = document.getElementById('btn-insp-prev');
+  const btnInspNext = document.getElementById('btn-insp-next');
+
+  if (btnInspPrev) {
+    btnInspPrev.addEventListener('click', () => {
+      if (activeInspectorIndex > 0) {
+        openTagInspector(tagsCatalogItems[activeInspectorIndex - 1], activeInspectorIndex - 1);
+      }
+    });
+  }
+
+  if (btnInspNext) {
+    btnInspNext.addEventListener('click', () => {
+      if (activeInspectorIndex < tagsCatalogItems.length - 1) {
+        openTagInspector(tagsCatalogItems[activeInspectorIndex + 1], activeInspectorIndex + 1);
+      }
+    });
+  }
+
+  // Inspector System Open & Reveal
+  const btnInspOpenSys = document.getElementById('btn-insp-open-system');
+  if (btnInspOpenSys) {
+    btnInspOpenSys.addEventListener('click', async () => {
+      if (!activeInspectorItem) return;
+      try {
+        await fetch(API_BASE + '/api/files/open-system', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file_id: activeInspectorItem.id })
+        });
+        showToast(`Opening "${activeInspectorItem.filename}" in player...`, 'info');
+      } catch (err) {
+        showToast('Failed to launch player: ' + err, 'error');
+      }
+    });
+  }
+
+  const btnInspReveal = document.getElementById('btn-insp-reveal');
+  if (btnInspReveal) {
+    btnInspReveal.addEventListener('click', () => {
+      if (activeInspectorItem) openFileLocation(activeInspectorItem.abs_path, false);
+    });
+  }
+
+  const btnInspCopyPath = document.getElementById('btn-insp-copy-path');
+  if (btnInspCopyPath) {
+    btnInspCopyPath.addEventListener('click', async () => {
+      if (activeInspectorItem) {
+        try {
+          await navigator.clipboard.writeText(activeInspectorItem.abs_path);
+          showToast('File path copied to clipboard!', 'success');
+        } catch (e) {
+          showToast('Failed to copy path: ' + e, 'error');
+        }
+      }
+    });
+  }
+
+  // Inspector inputs: Enter key to add tags
+  bindInspectorInput('txt-insp-add-speaker', 'btn-insp-add-speaker', 'speaker');
+  bindInspectorInput('txt-insp-add-topic', 'btn-insp-add-topic', 'topic');
+  bindInspectorInput('txt-insp-add-mention', 'btn-insp-add-mention', 'mention');
+  bindInspectorInput('txt-insp-add-general', 'btn-insp-add-general', 'general');
+
+  // Star Rating clicks in Inspector
+  document.querySelectorAll('#insp-star-rating .star-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!activeInspectorItem) return;
+      const v = parseInt(btn.dataset.val, 10);
+      const newRating = activeInspectorItem.rating === v ? 0 : v;
+      activeInspectorItem.rating = newRating;
+      renderInspectorStars(newRating);
+      saveInspectorNotesAndRating();
+    });
+  });
+
+  // Save notes button & blur
+  const btnSaveInsp = document.getElementById('btn-insp-save-now');
+  if (btnSaveInsp) {
+    btnSaveInsp.addEventListener('click', saveInspectorNotesAndRating);
+  }
+
+  // Keyboard navigation when Inspector is open
+  window.addEventListener('keydown', (e) => {
+    const modal = document.getElementById('modal-tag-inspector');
+    if (!modal || !modal.classList.contains('active')) return;
+
+    const activeEl = document.activeElement;
+    const isTyping = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
+
+    if (e.key === 'ArrowLeft' && !isTyping) {
+      e.preventDefault();
+      btnInspPrev?.click();
+    } else if (e.key === 'ArrowRight' && !isTyping) {
+      e.preventDefault();
+      btnInspNext?.click();
+    } else if (e.key === 'Escape') {
+      const v = document.getElementById('insp-video-player');
+      if (v) { v.pause(); v.src = ''; }
+      modal.classList.remove('active');
+    }
+  });
+
+  // Pause video on any modal close button in inspector
+  document.querySelectorAll('#modal-tag-inspector .modal-close').forEach(b => {
+    b.addEventListener('click', () => {
+      const v = document.getElementById('insp-video-player');
+      if (v) { v.pause(); v.src = ''; }
+    });
+  });
+}
+
+function bindInspectorInput(inputId, btnId, category) {
+  const inp = document.getElementById(inputId);
+  const btn = document.getElementById(btnId);
+
+  const doAdd = () => {
+    if (!inp) return;
+    const val = inp.value.trim();
+    if (val) {
+      addInspectorTag(val, category);
+      inp.value = '';
+    }
+  };
+
+  if (inp) {
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        doAdd();
+      }
+    });
+  }
+
+  if (btn) {
+    btn.addEventListener('click', doAdd);
+  }
+}
+

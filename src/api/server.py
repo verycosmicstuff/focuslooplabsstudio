@@ -18,7 +18,11 @@ from src.config import (
     RAW_EXTS, PHOTO_EXTS, VIDEO_EXTS
 )
 from src.core.db import get_db, init_db, db_transaction
-from src.core.models import SourceCreate, SourceExclusionsUpdate, SourceUpdate, CullingAction, TranscodeRequest, OrganizeRule
+from src.core.models import (
+    SourceCreate, SourceExclusionsUpdate, SourceUpdate, CullingAction, TranscodeRequest,
+    OrganizeRule, FileTagsUpdate, FileNotesUpdate, BatchTagAction
+)
+from src.core.tag_manager import TagManager
 from src.core.logger import get_logger, LOG_FILE, LOGS_DIR
 from src.core.session import get_session_state, save_session_state, record_last_task
 from src.scanner.indexer import SourceIndexer
@@ -1127,6 +1131,131 @@ def open_file_location(payload: Dict[str, Any]):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to open explorer: {str(e)}")
+
+# ----------------- MEDIA TAGS & CATALOG -----------------
+
+@app.get("/api/tags/catalog")
+def get_tags_catalog(
+    source_id: Optional[int] = None,
+    folder: Optional[str] = None,
+    media_type: Optional[str] = "all",
+    tag: Optional[str] = None,
+    category: Optional[str] = None,
+    tag_status: Optional[str] = "all",
+    search: Optional[str] = None,
+    sort_by: str = "mtime_desc",
+    limit: int = 100,
+    offset: int = 0
+):
+    return TagManager.query_catalog(
+        source_id=source_id,
+        folder=folder,
+        media_type=media_type,
+        tag=tag,
+        category=category,
+        tag_status=tag_status,
+        search=search,
+        sort_by=sort_by,
+        limit=limit,
+        offset=offset
+    )
+
+@app.get("/api/tags/all")
+def get_all_tags():
+    return TagManager.get_all_tags()
+
+@app.get("/api/tags/folders")
+def get_tags_folders(source_id: Optional[int] = None):
+    return {"folders": TagManager.get_distinct_folders(source_id=source_id)}
+
+@app.post("/api/tags/update")
+def update_tags(payload: FileTagsUpdate):
+    results = {}
+    if payload.set_tags is not None and len(payload.file_ids) == 1:
+        res = TagManager.set_file_tags(payload.file_ids[0], payload.set_tags)
+        results["set"] = res
+    if payload.add_tags:
+        res = TagManager.add_tags(payload.file_ids, payload.add_tags)
+        results["added"] = res
+    if payload.remove_tags:
+        res = TagManager.remove_tags(payload.file_ids, payload.remove_tags)
+        results["removed"] = res
+    return {"status": "ok", "results": results}
+
+@app.post("/api/tags/batch")
+def batch_tag_action(payload: BatchTagAction):
+    if payload.action == "remove":
+        res = TagManager.remove_tags(payload.file_ids, payload.tags)
+    else:
+        res = TagManager.add_tags(payload.file_ids, payload.tags)
+    return {"status": "ok", "action": payload.action, "result": res}
+
+@app.post("/api/tags/notes")
+def update_media_notes(payload: FileNotesUpdate):
+    res = TagManager.update_notes(payload.file_id, notes=payload.notes, rating=payload.rating)
+    return {"status": "ok", "result": res}
+
+@app.get("/api/media/stream/{file_id}")
+def stream_media_file(file_id: int):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT abs_path, media_type FROM files WHERE id = ?", (file_id,))
+    row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Media file not found")
+    p = Path(row["abs_path"])
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail="File does not exist on disk")
+
+    ext = p.suffix.lower()
+    media_type = "application/octet-stream"
+    if ext in (".mp4", ".m4v"):
+        media_type = "video/mp4"
+    elif ext in (".mov", ".qt"):
+        media_type = "video/quicktime"
+    elif ext in (".webm",):
+        media_type = "video/webm"
+    elif ext in (".mkv",):
+        media_type = "video/x-matroska"
+    elif ext in (".jpg", ".jpeg"):
+        media_type = "image/jpeg"
+    elif ext in (".png",):
+        media_type = "image/png"
+    elif ext in (".webp",):
+        media_type = "image/webp"
+
+    return FileResponse(str(p), media_type=media_type)
+
+@app.post("/api/files/open-system")
+def open_file_in_system(payload: Dict[str, Any]):
+    file_id = payload.get("file_id")
+    target_path = payload.get("path")
+    if file_id and not target_path:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT abs_path FROM files WHERE id = ?", (file_id,))
+        row = cursor.fetchone()
+        if row:
+            target_path = row["abs_path"]
+
+    if not target_path:
+        raise HTTPException(status_code=400, detail="Target path or file_id required")
+
+    p = Path(target_path).resolve()
+    if not p.exists():
+        raise HTTPException(status_code=404, detail=f"File not found on disk: {p}")
+
+    try:
+        if sys.platform == "win32":
+            os.startfile(str(p))
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(p)])
+        else:
+            subprocess.Popen(["xdg-open", str(p)])
+        return {"status": "ok", "opened": str(p)}
+    except Exception as e:
+        logger.error(f"Failed to open file in system player: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to launch player: {e}")
 
 # ----------------- CLIENT PROOFING & WATERMARKING -----------------
 

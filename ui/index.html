@@ -53,6 +53,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/><path d="M14 6l6 6"/></svg>
         Proofing & Watermark
       </div>
+      <div class="nav-item" data-tab="tags">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+        Media Tags & Catalog
+      </div>
     </nav>
 
     <!-- Processing Speed Box -->
@@ -858,6 +862,135 @@
         </div>
 
       </section>
+
+      <!-- 9. MEDIA TAGS & CATALOG TAB -->
+      <section id="tab-tags" class="tab-panel">
+        <!-- Scope & Filters Toolbar -->
+        <div class="toolbar" style="flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between;">
+          <div class="toolbar-group" style="flex-wrap: wrap; gap: 8px; align-items: center;">
+            <!-- Drive / Scope -->
+            <div style="display: flex; align-items: center; gap: 5px;">
+              <label style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Drive / Scope:</label>
+              <select id="sel-tags-source" style="background: var(--bg-card); color: #fff; border: 1px solid var(--border-color); padding: 5px 8px; border-radius: 6px; font-size: 12px; max-width: 200px;">
+                <option value="">🌐 Whole Collection (All Drives)</option>
+              </select>
+            </div>
+
+            <!-- Folder / Subfolder Filter -->
+            <div style="display: flex; align-items: center; gap: 5px;">
+              <label style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Folder / Subfolder:</label>
+              <select id="sel-tags-folder" style="background: var(--bg-card); color: #fff; border: 1px solid var(--border-color); padding: 5px 8px; border-radius: 6px; font-size: 12px; max-width: 220px;">
+                <option value="">📁 All Folders & Subfolders</option>
+              </select>
+            </div>
+
+            <!-- Media Type -->
+            <div style="display: flex; align-items: center; gap: 5px;">
+              <label style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Type:</label>
+              <select id="sel-tags-media-type" style="background: var(--bg-card); color: #fff; border: 1px solid var(--border-color); padding: 5px 8px; border-radius: 6px; font-size: 12px;">
+                <option value="all">🎬 All Media</option>
+                <option value="video" selected>🎬 Videos Only</option>
+                <option value="photo">📷 Photos Only</option>
+              </select>
+            </div>
+
+            <!-- Tag Status -->
+            <div style="display: flex; align-items: center; gap: 5px;">
+              <label style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Status:</label>
+              <select id="sel-tags-status" style="background: var(--bg-card); color: #fff; border: 1px solid var(--border-color); padding: 5px 8px; border-radius: 6px; font-size: 12px;">
+                <option value="all">All Items</option>
+                <option value="tagged">🏷️ Tagged Only</option>
+                <option value="untagged">⚠️ Untagged Only</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="toolbar-group" style="flex-wrap: wrap; gap: 8px; align-items: center;">
+            <!-- Sort By -->
+            <div style="display: flex; align-items: center; gap: 5px;">
+              <label style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Sort:</label>
+              <select id="sel-tags-sort" style="background: var(--bg-card); color: #fff; border: 1px solid var(--border-color); padding: 5px 8px; border-radius: 6px; font-size: 12px;">
+                <option value="mtime_desc">Date Modified (Newest)</option>
+                <option value="mtime_asc">Date Modified (Oldest)</option>
+                <option value="duration_desc">Duration (Longest)</option>
+                <option value="duration_asc">Duration (Shortest)</option>
+                <option value="name_asc">Name (A → Z)</option>
+                <option value="name_desc">Name (Z → A)</option>
+                <option value="size_desc">File Size (Largest)</option>
+                <option value="tags_desc">Most Tags</option>
+                <option value="rating_desc">Highest Rated (⭐)</option>
+              </select>
+            </div>
+
+            <!-- View switch -->
+            <div style="display: flex; gap: 2px; background: var(--bg-card); padding: 2px; border-radius: 6px; border: 1px solid var(--border-color);">
+              <button id="btn-tags-view-grid" class="btn btn-secondary btn-sm active" style="padding: 3px 8px; font-size: 11px;" title="Grid View">🔲 Grid</button>
+              <button id="btn-tags-view-list" class="btn btn-secondary btn-sm" style="padding: 3px 8px; font-size: 11px;" title="List View">☰ List</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Search Bar & Tag Cloud Filter -->
+        <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px;">
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <div style="position: relative; flex: 1;">
+              <input type="text" id="txt-tags-search" placeholder="🔍 Search who spoke, topics, mentions, notes, or filename across your collection..." style="width: 100%; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 7px 12px; border-radius: 6px; font-size: 13px;">
+              <button id="btn-clear-tags-search" style="position: absolute; right: 8px; top: 7px; background: none; border: none; color: var(--text-muted); cursor: pointer; display: none;">✕</button>
+            </div>
+            <button id="btn-tags-quick-refresh" class="btn btn-secondary btn-sm" style="white-space: nowrap; padding: 7px 12px;">🔄 Search</button>
+          </div>
+
+          <!-- Interactive Categorized Tag Cloud Filter -->
+          <div id="tags-filter-cloud" style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 11px;">
+            <span style="color: var(--text-muted); font-weight: 600; margin-right: 4px;">Quick Tag Filters:</span>
+            <div id="tags-cloud-pills" style="display: flex; flex-wrap: wrap; gap: 5px; align-items: center;">
+              <!-- Dynamically populated tag chips -->
+            </div>
+            <button id="btn-clear-active-tag-filter" class="btn btn-secondary btn-sm" style="display: none; padding: 1px 7px; font-size: 10px; color: var(--accent-rose); border-color: rgba(244, 63, 94, 0.3);">✕ Clear Filter</button>
+          </div>
+        </div>
+
+        <!-- Batch Action Bar & Selection Info -->
+        <div id="tags-batch-toolbar" style="background: rgba(6, 182, 212, 0.08); border: 1px solid rgba(6, 182, 212, 0.25); border-radius: 8px; padding: 8px 14px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; color: var(--text-main); font-weight: 600;">
+              <input type="checkbox" id="chk-tags-select-all"> Select All (<span id="lbl-tags-filtered-count">0</span> items)
+            </label>
+            <span id="lbl-tags-selection-summary" style="font-size: 12px; color: var(--accent-cyan); font-weight: 600;">0 selected</span>
+            <span id="lbl-tags-stats-badge" style="font-size: 11px; color: var(--text-muted);">0 tagged • 0 untagged</span>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <button id="btn-open-batch-tag-modal" class="btn btn-primary btn-sm" disabled title="Add or remove tags from all selected files">🏷️ Batch Tag Selected (<span class="badge-sel-count">0</span>)</button>
+            <button id="btn-batch-reveal-explorer" class="btn btn-secondary btn-sm" disabled title="Reveal selected files in File Explorer">📂 Reveal Folder</button>
+            <button id="btn-tags-select-none" class="btn btn-secondary btn-sm" style="display: none;">Deselect All</button>
+          </div>
+        </div>
+
+        <!-- Media Catalog Container (Grid / List) -->
+        <div id="tags-catalog-container" class="tags-grid-view">
+          <!-- Dynamic cards or table rows -->
+        </div>
+
+        <!-- Empty state placeholder -->
+        <div id="tags-empty-placeholder" style="display: none; text-align: center; padding: 60px 20px; color: var(--text-muted);">
+          <div style="font-size: 36px; margin-bottom: 12px;">🏷️</div>
+          <h4 style="font-size: 16px; color: var(--text-main); margin-bottom: 6px;">No media matches your filter</h4>
+          <p style="font-size: 13px; max-width: 480px; margin: 0 auto 16px;">
+            Try changing the folder/drive scope, clearing search keywords, or switching from "Tagged" to "All Items".
+          </p>
+          <button id="btn-reset-tags-filters" class="btn btn-secondary btn-sm">Reset All Filters</button>
+        </div>
+
+        <!-- Pagination Bar -->
+        <div id="tags-pagination-bar" style="display: flex; justify-content: space-between; align-items: center; margin-top: 14px; padding: 8px 4px; font-size: 12px; color: var(--text-muted);">
+          <span id="lbl-tags-page-info">Showing 0 - 0 of 0 items</span>
+          <div style="display: flex; gap: 6px;">
+            <button id="btn-tags-prev-page" class="btn btn-secondary btn-sm" disabled>◀ Previous</button>
+            <button id="btn-tags-next-page" class="btn btn-secondary btn-sm" disabled>Next ▶</button>
+          </div>
+        </div>
+      </section>
     </div>
   </main>
 
@@ -1169,6 +1302,229 @@
         <span class="ctx-item-icon">▶</span>
         <span class="ctx-item-label" id="ctx-queue-label">Queue for Transcode</span>
       </button>
+    </div>
+  </div>
+
+  <!-- Media Tag Inspector & Detail Modal -->
+  <div id="modal-tag-inspector" class="modal-overlay" style="z-index: 9998; backdrop-filter: blur(8px); background: rgba(3, 7, 18, 0.9);">
+    <div style="position: relative; width: 94vw; height: 92vh; max-width: 1300px; display: flex; flex-direction: column; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.85);">
+      
+      <!-- Modal Header -->
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 18px; border-bottom: 1px solid var(--border-color); background: rgba(0,0,0,0.3);">
+        <div style="display: flex; align-items: center; gap: 10px; min-width: 0;">
+          <span id="insp-counter-badge" style="background: var(--accent-cyan); color: #000; font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 10px;">Item 1 of 1</span>
+          <span id="insp-media-type-badge" class="brand-badge">VIDEO</span>
+          <span id="insp-filename" style="font-size: 15px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">filename.mp4</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <button id="btn-insp-prev" class="btn btn-secondary btn-sm" title="Previous Media (Left Arrow)">◀ Prev</button>
+          <button id="btn-insp-next" class="btn btn-secondary btn-sm" title="Next Media (Right Arrow)">Next ▶</button>
+          <button class="btn btn-secondary btn-sm modal-close" style="font-size: 18px; padding: 2px 10px; line-height: 1;">&times;</button>
+        </div>
+      </div>
+
+      <!-- Modal Body (Split: Left Preview & Info, Right Tags & Notes) -->
+      <div style="flex: 1; display: grid; grid-template-columns: 460px 1fr; overflow: hidden;">
+        
+        <!-- Left: Preview & File Details -->
+        <div style="display: flex; flex-direction: column; border-right: 1px solid var(--border-color); background: rgba(0,0,0,0.2); overflow-y: auto; padding: 16px; gap: 14px;">
+          <!-- Media Player / Preview -->
+          <div style="background: #000; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; position: relative; min-height: 240px; max-height: 280px; display: flex; align-items: center; justify-content: center;">
+            <video id="insp-video-player" controls preload="metadata" style="width: 100%; height: 100%; max-height: 280px; display: none;"></video>
+            <img id="insp-photo-player" src="" alt="Photo Preview" style="max-width: 100%; max-height: 280px; object-fit: contain; display: none;">
+            <div id="insp-player-fallback" style="display: none; padding: 20px; text-align: center; color: var(--text-muted); font-size: 12px;">
+              <span>Direct inline preview not available for this codec.</span>
+            </div>
+          </div>
+
+          <!-- Quick Action Buttons -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            <button id="btn-insp-open-system" class="btn btn-primary btn-sm" style="justify-content: center; font-size: 11px;">▶ Open in VLC / Player</button>
+            <button id="btn-insp-reveal" class="btn btn-secondary btn-sm" style="justify-content: center; font-size: 11px;">📂 Reveal in Explorer</button>
+          </div>
+          <button id="btn-insp-copy-path" class="btn btn-secondary btn-sm" style="justify-content: center; font-size: 11px;">📋 Copy Full File Path</button>
+
+          <!-- File Technical Specifications -->
+          <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; font-size: 12px;">
+            <div style="font-weight: 700; color: var(--accent-cyan); margin-bottom: 8px; font-size: 11px; text-transform: uppercase;">Technical Metadata</div>
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-muted);">Duration:</span><strong id="insp-spec-duration">-</strong></div>
+              <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-muted);">Resolution:</span><strong id="insp-spec-res">-</strong></div>
+              <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-muted);">Codec:</span><strong id="insp-spec-codec">-</strong></div>
+              <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-muted);">File Size:</span><strong id="insp-spec-size">-</strong></div>
+              <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-muted);">Date Modified:</span><strong id="insp-spec-date">-</strong></div>
+              <div style="display: flex; flex-direction: column; gap: 2px; margin-top: 4px;">
+                <span style="color: var(--text-muted);">Folder Location:</span>
+                <span id="insp-spec-path" style="font-family: monospace; font-size: 11px; word-break: break-all; color: var(--text-main); background: rgba(0,0,0,0.3); padding: 4px 6px; border-radius: 4px;"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Interactive Meta Tags & Notes -->
+        <div style="display: flex; flex-direction: column; overflow-y: auto; padding: 18px; gap: 16px;">
+          
+          <!-- Section 1: Who Spoke (Speakers / People) -->
+          <div class="tag-section-card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <label style="font-size: 12px; font-weight: 700; color: #c084fc; display: flex; align-items: center; gap: 5px;">
+                <span>🎙️ Who Spoke (Speakers & Presenters)</span>
+              </label>
+              <span style="font-size: 10px; color: var(--text-muted);">Press Enter to add</span>
+            </div>
+            <div id="insp-chips-speaker" class="tags-chips-container">
+              <!-- Speaker chips -->
+            </div>
+            <div style="display: flex; gap: 6px; margin-top: 6px;">
+              <input type="text" id="txt-insp-add-speaker" placeholder="Add speaker name (e.g. John, Dr. Vance)..." style="flex: 1; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 5px 10px; border-radius: 6px; font-size: 12px;">
+              <button id="btn-insp-add-speaker" class="btn btn-secondary btn-sm" style="padding: 4px 10px;">+ Add</button>
+            </div>
+            <!-- Quick Suggestions for Speakers -->
+            <div id="insp-sugg-speaker" style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; align-items: center;"></div>
+          </div>
+
+          <!-- Section 2: What Topics (Topics & Themes) -->
+          <div class="tag-section-card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <label style="font-size: 12px; font-weight: 700; color: #38bdf8; display: flex; align-items: center; gap: 5px;">
+                <span>💡 What Topics (Agenda & Themes)</span>
+              </label>
+              <span style="font-size: 10px; color: var(--text-muted);">Press Enter to add</span>
+            </div>
+            <div id="insp-chips-topic" class="tags-chips-container">
+              <!-- Topic chips -->
+            </div>
+            <div style="display: flex; gap: 6px; margin-top: 6px;">
+              <input type="text" id="txt-insp-add-topic" placeholder="Add topic (e.g. Keynote, Q3 Budget, Tutorial)..." style="flex: 1; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 5px 10px; border-radius: 6px; font-size: 12px;">
+              <button id="btn-insp-add-topic" class="btn btn-secondary btn-sm" style="padding: 4px 10px;">+ Add</button>
+            </div>
+            <!-- Quick Suggestions for Topics -->
+            <div id="insp-sugg-topic" style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; align-items: center;"></div>
+          </div>
+
+          <!-- Section 3: What Mentioned (Key Mentions & Keywords) -->
+          <div class="tag-section-card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <label style="font-size: 12px; font-weight: 700; color: #fbbf24; display: flex; align-items: center; gap: 5px;">
+                <span>📌 What Mentioned (Keywords & References)</span>
+              </label>
+              <span style="font-size: 10px; color: var(--text-muted);">Press Enter to add</span>
+            </div>
+            <div id="insp-chips-mention" class="tags-chips-container">
+              <!-- Mention chips -->
+            </div>
+            <div style="display: flex; gap: 6px; margin-top: 6px;">
+              <input type="text" id="txt-insp-add-mention" placeholder="Add keyword or mention (e.g. Project Titan, Patent #12)..." style="flex: 1; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 5px 10px; border-radius: 6px; font-size: 12px;">
+              <button id="btn-insp-add-mention" class="btn btn-secondary btn-sm" style="padding: 4px 10px;">+ Add</button>
+            </div>
+            <!-- Quick Suggestions for Mentions -->
+            <div id="insp-sugg-mention" style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; align-items: center;"></div>
+          </div>
+
+          <!-- Section 4: General Tags -->
+          <div class="tag-section-card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <label style="font-size: 12px; font-weight: 700; color: #34d399; display: flex; align-items: center; gap: 5px;">
+                <span>🏷️ General Meta Tags</span>
+              </label>
+              <span style="font-size: 10px; color: var(--text-muted);">Press Enter to add</span>
+            </div>
+            <div id="insp-chips-general" class="tags-chips-container">
+              <!-- General tag chips -->
+            </div>
+            <div style="display: flex; gap: 6px; margin-top: 6px;">
+              <input type="text" id="txt-insp-add-general" placeholder="Add tag (e.g. B-Roll, Final Cut, Good Audio)..." style="flex: 1; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 5px 10px; border-radius: 6px; font-size: 12px;">
+              <button id="btn-insp-add-general" class="btn btn-secondary btn-sm" style="padding: 4px 10px;">+ Add</button>
+            </div>
+          </div>
+
+          <!-- Section 5: Notes, Summary & Talking Points -->
+          <div class="tag-section-card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <label style="font-size: 12px; font-weight: 700; color: var(--text-main); display: flex; align-items: center; gap: 5px;">
+                <span>📝 Video Notes, Timestamps & Summary</span>
+              </label>
+              <!-- Star Rating -->
+              <div style="display: flex; align-items: center; gap: 4px;">
+                <span style="font-size: 11px; color: var(--text-muted); margin-right: 4px;">Rating:</span>
+                <div id="insp-star-rating" class="star-rating-box">
+                  <span class="star-btn" data-val="1">★</span>
+                  <span class="star-btn" data-val="2">★</span>
+                  <span class="star-btn" data-val="3">★</span>
+                  <span class="star-btn" data-val="4">★</span>
+                  <span class="star-btn" data-val="5">★</span>
+                </div>
+              </div>
+            </div>
+            <textarea id="txt-insp-notes" rows="4" placeholder="Write description, timestamps, summary of what happened, key quotes..." style="width: 100%; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 8px 10px; border-radius: 6px; font-size: 12px; font-family: inherit; resize: vertical;"></textarea>
+          </div>
+
+          <!-- Action & Save Footer -->
+          <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 6px; border-top: 1px solid var(--border-color);">
+            <span id="insp-save-status" style="font-size: 12px; color: var(--accent-emerald); display: none;">✓ All tags and notes saved</span>
+            <div style="display: flex; gap: 8px; margin-left: auto;">
+              <button id="btn-insp-save-now" class="btn btn-primary" style="padding: 6px 16px; font-size: 12px;">💾 Save Details</button>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- Bottom Bar -->
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 18px; border-top: 1px solid var(--border-color); background: rgba(0,0,0,0.35); font-size: 11px; color: var(--text-muted);">
+        <div>Shortcut navigation: ⬅️ / ➡️ arrow keys &bull; Esc to close &bull; Enter to add tag</div>
+        <button class="btn btn-secondary btn-sm modal-close" style="padding: 2px 10px;">Close Inspector</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Batch Tag Modal -->
+  <div id="modal-batch-tag" class="modal-overlay" style="z-index: 9999;">
+    <div class="modal-dialog" style="max-width: 480px;">
+      <div class="modal-header">
+        <h3 style="font-size: 15px;">🏷️ Batch Tag Media (<span id="batch-tag-count">0</span> items selected)</h3>
+        <button class="btn btn-secondary btn-sm modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="display: flex; flex-direction: column; gap: 14px;">
+          <div>
+            <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Action:</label>
+            <select id="sel-batch-action" style="width: 100%; background: var(--bg-card); color: #fff; border: 1px solid var(--border-color); padding: 7px 10px; border-radius: 6px; font-size: 13px;">
+              <option value="add" selected>+ Add Tag to Selected Media</option>
+              <option value="remove">− Remove Tag from Selected Media</option>
+            </select>
+          </div>
+
+          <div>
+            <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Tag Category:</label>
+            <select id="sel-batch-category" style="width: 100%; background: var(--bg-card); color: #fff; border: 1px solid var(--border-color); padding: 7px 10px; border-radius: 6px; font-size: 13px;">
+              <option value="speaker">🎙️ Speaker / Person Who Spoke</option>
+              <option value="topic">💡 Topic / Theme / Agenda</option>
+              <option value="mention">📌 Mention / Keyword / Subject</option>
+              <option value="general" selected>🏷️ General Tag</option>
+            </select>
+          </div>
+
+          <div>
+            <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Tag Name:</label>
+            <input type="text" id="txt-batch-tag-name" placeholder="e.g. Alex, Keynote, Project Apollo, B-Roll..." style="width: 100%; background: var(--bg-card); color: #fff; border: 1px solid var(--border-color); padding: 8px 12px; border-radius: 6px; font-size: 13px;">
+          </div>
+
+          <!-- Existing tags quick-select for batch -->
+          <div id="batch-existing-tags-box" style="display: flex; flex-direction: column; gap: 4px;">
+            <span style="font-size: 11px; color: var(--text-muted);">Or pick from existing tags:</span>
+            <div id="batch-existing-chips" style="display: flex; flex-wrap: wrap; gap: 5px; max-height: 100px; overflow-y: auto;">
+              <!-- Existing chips -->
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px;">
+        <button class="btn btn-secondary modal-close">Cancel</button>
+        <button id="btn-execute-batch-tag" class="btn btn-primary">Apply to Selected Media</button>
+      </div>
     </div>
   </div>
 

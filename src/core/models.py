@@ -68,3 +68,24 @@ class OrganizeRule(BaseModel):
     destination_root: str
     pattern: str = "{year}/{year}-{month}/{date}_{camera}/{filename}"
     dry_run: bool = True
+
+class TagItem(BaseModel):
+    tag: str
+    category: Optional[str] = "general"
+
+class FileTagsUpdate(BaseModel):
+    file_ids: List[int]
+    add_tags: Optional[List[Dict[str, str]]] = []
+    remove_tags: Optional[List[Dict[str, str]]] = []
+    set_tags: Optional[List[Dict[str, str]]] = None
+
+class FileNotesUpdate(BaseModel):
+    file_id: int
+    notes: Optional[str] = None
+    rating: Optional[int] = None
+
+class BatchTagAction(BaseModel):
+    file_ids: List[int]
+    action: str = "add" # "add", "remove"
+    tags: List[Dict[str, str]] = []
+
