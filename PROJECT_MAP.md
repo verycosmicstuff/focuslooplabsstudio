@@ -16,14 +16,13 @@
 - `ui/`: Responsive dark dashboard (`index.html`, `js/app.js`, `css/app.css`).
 
 ## Recent Changes
-- Released **v2.3.1** of Local **People & Faces** engine:
-  - SQLite tables `people` & `face_detections` with 128-d vector embeddings and avatar thumbnails.
+- Released **v2.3.2** of Local **People & Faces** engine:
+  - Fixed person media card "👁 View" and "▶ Play" buttons: wired to universal lightbox photo viewer with gallery arrow navigation, and system video player launcher.
+  - Added clickable thumbnail wrapper on media cards.
   - CUDA GPU acceleration on RTX 3060 (~2.02 ms per face) + strict CPU thread clamping (`cv2.setNumThreads(1)`).
   - Reduced CPU overhead: optimized video keyframe resolution to native 640x640 and added OS thread yield.
-  - Media type filtering (`all`, `video`, `photo`) and sort modes (`video_count`, `photo_count`, `count`, `name`, `recent`).
-  - Scoped Hunt: Target search and photo upload search can now be scoped to specific drives, subfolders, or media types instead of just whole collection.
+  - Scoped Hunt: Target search and photo upload search can now be scoped to specific drives, subfolders, or media types.
   - Upload Reference Photo: Auto-extract face chips for selection, register person, and launch instant background hunt.
-  - Fixed thumbnail route pluralization and added picture-in-picture face crop overlay badges with local disk fallback.
 - 53/53 unit tests passing.
 
 ## Active Objective

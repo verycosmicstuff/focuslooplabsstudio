@@ -4296,6 +4296,36 @@ window.openUniversalPreviewModal = function({ items, currentIndex = 0, fromCulle
   modal.classList.add('active');
 };
 
+window.openPhotoPreview = function(pathOrItem, allItems = null) {
+  if (!pathOrItem) return;
+  let items = [];
+  let currentIndex = 0;
+
+  if (Array.isArray(allItems) && allItems.length > 0) {
+    items = allItems;
+    if (typeof pathOrItem === 'string') {
+      const idx = items.findIndex(it => (it.abs_path || it.path) === pathOrItem);
+      currentIndex = idx >= 0 ? idx : 0;
+    } else if (typeof pathOrItem === 'object') {
+      const idx = items.findIndex(it => (it.file_id && it.file_id === pathOrItem.file_id) || ((it.abs_path || it.path) && (it.abs_path || it.path) === (pathOrItem.abs_path || pathOrItem.path)));
+      currentIndex = idx >= 0 ? idx : 0;
+    }
+  } else {
+    if (typeof pathOrItem === 'string') {
+      items = [{ abs_path: pathOrItem, filename: pathOrItem.split(/[/\\]/).pop() }];
+    } else if (typeof pathOrItem === 'object') {
+      items = [pathOrItem];
+    }
+  }
+
+  if (items.length > 0) {
+    window.openUniversalPreviewModal({ items, currentIndex });
+  }
+};
+function openPhotoPreview(pathOrItem, allItems = null) {
+  return window.openPhotoPreview(pathOrItem, allItems);
+}
+
 function renderPreviewModalCurrentItem() {
   const { items, currentIndex } = previewModalState;
   if (!items || items.length === 0) return;
@@ -4338,18 +4368,29 @@ function renderPreviewModalCurrentItem() {
     imgEl.style.opacity = '0.2';
 
     // Fetch high-res preview
-    const previewUrl = API_BASE + '/api/preview_by_path?path=' + encodeURIComponent(absPath) + '&max_dim=1800';
+    let previewUrl = API_BASE + '/api/preview_by_path?path=' + encodeURIComponent(absPath) + '&max_dim=1800';
+    if (!absPath && item.file_id) {
+      previewUrl = API_BASE + '/api/thumbnail/' + item.file_id;
+    }
+
     imgEl.onload = () => {
       loaderEl.style.display = 'none';
       imgEl.style.opacity = '1';
     };
     imgEl.onerror = () => {
       // Fallback to thumbnail URL if preview fails
-      const fallbackUrl = API_BASE + '/api/thumbnail_by_path?path=' + encodeURIComponent(absPath);
-      imgEl.onerror = null;
+      let fallbackUrl = absPath ? (API_BASE + '/api/thumbnail_by_path?path=' + encodeURIComponent(absPath)) : '';
+      if (item.file_id) {
+        fallbackUrl = API_BASE + '/api/thumbnail/' + item.file_id;
+      } else if (item.faces && item.faces.length > 0 && item.faces[0].thumbnail_url) {
+        fallbackUrl = API_BASE + item.faces[0].thumbnail_url;
+      }
+      imgEl.onerror = () => {
+        imgEl.src = 'icons/app_icon.png';
+        loaderEl.style.display = 'none';
+        imgEl.style.opacity = '1';
+      };
       imgEl.src = fallbackUrl;
-      loaderEl.style.display = 'none';
-      imgEl.style.opacity = '1';
     };
     imgEl.src = previewUrl;
   }
@@ -5832,20 +5873,42 @@ async function openPersonDetail(personId) {
             });
           }
 
-          // Play / View action
+          // Play / View action handler
+          const handleViewOrPlay = () => {
+            if (isVideo) {
+              showToast(`Launching system player for "${item.filename}"...`, 'info');
+              fetch(`${API_BASE}/api/files/open-system`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ file_id: item.file_id, path: item.abs_path })
+              }).then(async res => {
+                if (!res.ok) {
+                  const errData = await res.json().catch(() => ({}));
+                  showToast('Could not open video player: ' + (errData.detail || 'Failed'), 'error');
+                }
+              }).catch(err => {
+                showToast('Failed to open player: ' + err.message, 'error');
+              });
+            } else {
+              const photoItems = person.media ? person.media.filter(m => m.media_type !== 'video') : [item];
+              openPhotoPreview(item, photoItems);
+            }
+          };
+
           const btnPlay = card.querySelector('.btn-play-media');
           if (btnPlay) {
             btnPlay.addEventListener('click', (e) => {
               e.stopPropagation();
-              if (isVideo) {
-                fetch(`${API_BASE}/api/files/open-system`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ file_id: item.file_id })
-                });
-              } else {
-                openPhotoPreview(item.abs_path);
-              }
+              handleViewOrPlay();
+            });
+          }
+
+          const thumbWrap = card.querySelector('.person-media-thumb-wrap');
+          if (thumbWrap) {
+            thumbWrap.style.cursor = 'pointer';
+            thumbWrap.addEventListener('click', (e) => {
+              if (e.target.closest('.face-unlink-btn')) return;
+              handleViewOrPlay();
             });
           }
 
@@ -6048,19 +6111,42 @@ async function refreshActivePersonDetailMedia(personId) {
             });
           }
 
+          // Play / View action handler
+          const handleViewOrPlay = () => {
+            if (isVideo) {
+              showToast(`Launching system player for "${item.filename}"...`, 'info');
+              fetch(`${API_BASE}/api/files/open-system`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ file_id: item.file_id, path: item.abs_path })
+              }).then(async res => {
+                if (!res.ok) {
+                  const errData = await res.json().catch(() => ({}));
+                  showToast('Could not open video player: ' + (errData.detail || 'Failed'), 'error');
+                }
+              }).catch(err => {
+                showToast('Failed to open player: ' + err.message, 'error');
+              });
+            } else {
+              const photoItems = person.media ? person.media.filter(m => m.media_type !== 'video') : [item];
+              openPhotoPreview(item, photoItems);
+            }
+          };
+
           const btnPlay = card.querySelector('.btn-play-media');
           if (btnPlay) {
             btnPlay.addEventListener('click', (e) => {
               e.stopPropagation();
-              if (isVideo) {
-                fetch(`${API_BASE}/api/files/open-system`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ file_id: item.file_id })
-                });
-              } else {
-                openPhotoPreview(item.abs_path);
-              }
+              handleViewOrPlay();
+            });
+          }
+
+          const thumbWrap = card.querySelector('.person-media-thumb-wrap');
+          if (thumbWrap) {
+            thumbWrap.style.cursor = 'pointer';
+            thumbWrap.addEventListener('click', (e) => {
+              if (e.target.closest('.face-unlink-btn')) return;
+              handleViewOrPlay();
             });
           }
 
