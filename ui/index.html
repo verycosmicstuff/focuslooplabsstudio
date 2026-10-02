@@ -43,7 +43,7 @@
       </div>
       <div class="nav-item" data-tab="sync">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/><path d="M2.5 22v-6h6M2.66 8.43a10 10 0 0 0 .57 8.38L-2.44 22"/></svg>
-        Primary & Backup Sync
+        Backup Doctor & Mirror Sync
       </div>
       <div class="nav-item" data-tab="organizer">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
@@ -377,40 +377,223 @@
         </div>
       </section>
 
-      <!-- 6. PRIMARY & BACKUP SYNC TAB -->
+      <!-- 6. BACKUP DOCTOR & MIRROR SYNC TAB -->
       <section id="tab-sync" class="tab-panel">
-        <div class="toolbar">
-          <div class="toolbar-group">
-            <label style="font-size: 13px; color:var(--text-muted)">Primary Working Directory:</label>
-            <select id="sel-sync-working" style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:6px 10px; border-radius:6px; font-size:13px;"></select>
-
-            <label style="font-size: 13px; color:var(--text-muted); margin-left:10px;">Backup Directory:</label>
-            <select id="sel-sync-backup" style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:6px 10px; border-radius:6px; font-size:13px;"></select>
-
-            <button id="btn-compare-sync" class="btn btn-secondary btn-sm" style="margin-left: 10px;">Compare Directories</button>
+        <!-- Sub-mode Switcher -->
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom: 16px; border-bottom: 1px solid var(--border-color); padding-bottom: 12px;">
+          <div style="display:flex; gap: 8px;">
+            <button id="btn-sync-subtab-doctor" class="btn btn-primary btn-sm" style="display:flex; align-items:center; gap:6px; font-weight:600;">
+              <span>🩺</span> Backup Doctor & Mirror Repair
+            </button>
+            <button id="btn-sync-subtab-reclaim" class="btn btn-secondary btn-sm" style="display:flex; align-items:center; gap:6px;">
+              <span>🧹</span> SSD Space Reclaimer
+            </button>
           </div>
-          <div class="toolbar-group">
-            <button id="btn-reclaim-safe-ssd" class="btn btn-primary btn-sm">Reclaim Space from Primary Directory</button>
-          </div>
+          <span style="font-size:12px; color:var(--text-muted); display:flex; align-items:center; gap:5px;">
+            <span style="color:var(--accent-emerald);">🛡️</span> Atomic .part staging with verify & auto-rollback
+          </span>
         </div>
 
-        <div id="sync-summary-card" class="stat-card emerald" style="display:none; margin-bottom: 20px;">
-          <div class="stat-label">Verified Safe Reclaimable Space</div>
-          <div class="stat-val" id="sync-reclaimable-size">0.0 GB</div>
-          <div class="stat-sub" id="sync-reclaimable-desc">These files exist in your Backup Directory with matching cryptographic hashes and are 100% safe to delete from your Primary Working Directory.</div>
-        </div>
+        <!-- 6A. BACKUP DOCTOR SUBPANEL -->
+        <div id="panel-backup-doctor">
+          <!-- Folder Selection Bar -->
+          <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; padding:16px; margin-bottom:16px;">
+            <div style="display:grid; grid-template-columns: 1fr 1fr auto; gap: 14px; align-items: flex-end;">
+              <div>
+                <label style="font-size: 12px; font-weight:600; color:var(--text-main); display:block; margin-bottom:6px;">
+                  Master / Source Directory <span style="color:var(--text-muted); font-weight:normal;">(NAS or Master Drive)</span>
+                </label>
+                <div style="display:flex; gap:6px;">
+                  <input type="text" id="txt-doctor-src" placeholder="e.g. \\10.0.0.87\awaaz\Awaaz\pgwp\Jan 18 or D:\Master" style="flex:1; background:var(--bg-secondary); color:#fff; border:1px solid var(--border-color); padding:7px 10px; border-radius:6px; font-size:12px; font-family:monospace;">
+                  <button id="btn-doctor-browse-src" class="btn btn-secondary btn-sm" type="button" title="Browse for master folder">📁 Browse...</button>
+                </div>
+              </div>
 
-        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-          <div>
-            <h4 style="margin-bottom: 10px; font-size: 14px; color:var(--accent-emerald);">Verified in Backup (Safe to Reclaim)</h4>
-            <div id="synced-safe-list" style="max-height: 400px; overflow-y: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px;">
-              <p style="color:var(--text-muted); font-size:13px;">Select directories and click Compare to analyze sync status.</p>
+              <div>
+                <label style="font-size: 12px; font-weight:600; color:var(--text-main); display:block; margin-bottom:6px;">
+                  Target / Backup Directory <span style="color:var(--text-muted); font-weight:normal;">(Local Disk or Backup Drive)</span>
+                </label>
+                <div style="display:flex; gap:6px;">
+                  <input type="text" id="txt-doctor-tgt" placeholder="e.g. D:\Awaaz Backup\pgwp\Jan 18 or E:\Backup" style="flex:1; background:var(--bg-secondary); color:#fff; border:1px solid var(--border-color); padding:7px 10px; border-radius:6px; font-size:12px; font-family:monospace;">
+                  <button id="btn-doctor-browse-tgt" class="btn btn-secondary btn-sm" type="button" title="Browse for backup folder">📁 Browse...</button>
+                </div>
+              </div>
+
+              <div style="display:flex; gap:6px;">
+                <button id="btn-doctor-audit" class="btn btn-primary" style="padding: 7px 16px; font-weight:600; font-size:13px; display:flex; align-items:center; gap:6px;">
+                  <span>🔍</span> Audit & Diagnose
+                </button>
+                <button id="btn-doctor-swap" class="btn btn-secondary btn-sm" type="button" title="Swap Source and Target" style="padding: 7px 10px;">
+                  ⇄
+                </button>
+              </div>
             </div>
           </div>
-          <div>
-            <h4 style="margin-bottom: 10px; font-size: 14px; color:var(--accent-rose);">Unbacked Up (Needs Copy to Backup Directory)</h4>
-            <div id="unbacked-up-list" style="max-height: 400px; overflow-y: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px;">
-              <p style="color:var(--text-muted); font-size:13px;">Select directories and click Compare to analyze sync status.</p>
+
+          <!-- Live Progress Card (hidden until active repair) -->
+          <div id="doctor-progress-card" style="display:none; background: linear-gradient(135deg, rgba(16, 185, 129, 0.08), rgba(6, 182, 212, 0.08)); border:1px solid rgba(16, 185, 129, 0.3); border-radius:10px; padding:16px; margin-bottom:16px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span class="status-pulse" style="display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--accent-emerald); box-shadow:0 0 10px var(--accent-emerald);"></span>
+                <span style="font-weight:600; font-size:13px; color:#fff;" id="doctor-progress-title">Repairing Corrupted Files...</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:12px;">
+                <span style="font-size:12px; color:var(--accent-cyan); font-family:monospace; font-weight:700;" id="doctor-progress-speed">0.0 MB/s</span>
+                <span style="font-size:12px; color:var(--text-muted);" id="doctor-progress-counter">0 / 0 files</span>
+                <button id="btn-doctor-cancel" class="btn btn-secondary btn-sm" style="color:var(--accent-rose); border-color:rgba(244,63,94,0.4); padding:3px 8px; font-size:11px;">🛑 Cancel</button>
+              </div>
+            </div>
+
+            <div style="width:100%; height:8px; background:rgba(0,0,0,0.4); border-radius:4px; overflow:hidden; margin-bottom:8px;">
+              <div id="doctor-progress-bar" style="width:0%; height:100%; background:linear-gradient(90deg, var(--accent-cyan), var(--accent-emerald)); transition: width 0.3s ease;"></div>
+            </div>
+
+            <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-muted);">
+              <span id="doctor-progress-file" style="font-family:monospace; color:var(--text-main); text-overflow:ellipsis; overflow:hidden; white-space:nowrap; max-width:70%;">Preparing transfer...</span>
+              <span id="doctor-progress-bytes">0 B / 0 B (0%)</span>
+            </div>
+          </div>
+
+          <!-- Audit Results Container (hidden until audited) -->
+          <div id="doctor-results-container" style="display:none;">
+            <!-- Diagnostic Stats Grid -->
+            <div class="grid-stats" style="grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); margin-bottom: 16px;">
+              <div class="stat-card cyan">
+                <div class="stat-label">Source Total</div>
+                <div class="stat-val" id="doctor-stat-src-size" style="font-size:20px;">0 B</div>
+                <div class="stat-sub" id="doctor-stat-src-files">0 files</div>
+              </div>
+              <div class="stat-card purple">
+                <div class="stat-label">Target Total</div>
+                <div class="stat-val" id="doctor-stat-tgt-size" style="font-size:20px;">0 B</div>
+                <div class="stat-sub" id="doctor-stat-tgt-files">0 files</div>
+              </div>
+              <div class="stat-card rose" id="doctor-card-corrupted">
+                <div class="stat-label">🚨 0-Byte Corrupted</div>
+                <div class="stat-val" id="doctor-stat-corrupt-count" style="font-size:20px; color:var(--accent-rose);">0</div>
+                <div class="stat-sub" id="doctor-stat-corrupt-bytes" style="color:var(--accent-rose);">0 B to repair</div>
+              </div>
+              <div class="stat-card amber" id="doctor-card-missing">
+                <div class="stat-label">⚠️ Missing on Target</div>
+                <div class="stat-val" id="doctor-stat-missing-count" style="font-size:20px; color:var(--accent-amber);">0</div>
+                <div class="stat-sub" id="doctor-stat-missing-bytes">0 B to sync</div>
+              </div>
+              <div class="stat-card emerald">
+                <div class="stat-label">✅ Healthy Matched</div>
+                <div class="stat-val" id="doctor-stat-healthy-count" style="font-size:20px; color:var(--accent-emerald);">0</div>
+                <div class="stat-sub">100% verified</div>
+              </div>
+            </div>
+
+            <!-- Action Toolbar & Filter Buttons -->
+            <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; padding:12px 16px; margin-bottom:14px; display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:10px;">
+              <!-- Filter Pills -->
+              <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                <button class="btn btn-secondary btn-sm btn-doctor-filter active" data-filter="defects" style="font-size:12px;">
+                  ⚠️ All Defects (<span id="doctor-badge-all-defects">0</span>)
+                </button>
+                <button class="btn btn-secondary btn-sm btn-doctor-filter" data-filter="corrupted" style="font-size:12px;">
+                  🚨 0-Byte Corrupted (<span id="doctor-badge-corrupt">0</span>)
+                </button>
+                <button class="btn btn-secondary btn-sm btn-doctor-filter" data-filter="missing" style="font-size:12px;">
+                  ⚠️ Missing (<span id="doctor-badge-missing">0</span>)
+                </button>
+                <button class="btn btn-secondary btn-sm btn-doctor-filter" data-filter="mismatch" style="font-size:12px;">
+                  ⚖️ Size Mismatch (<span id="doctor-badge-mismatch">0</span>)
+                </button>
+                <button class="btn btn-secondary btn-sm btn-doctor-filter" data-filter="healthy" style="font-size:12px;">
+                  ✅ Healthy (<span id="doctor-badge-healthy">0</span>)
+                </button>
+              </div>
+
+              <!-- Action Buttons -->
+              <div style="display:flex; gap:8px; align-items:center;">
+                <button id="btn-doctor-repair-corrupt" class="btn btn-primary btn-sm" style="display:none; font-weight:600; background:#e11d48; border-color:#be123c;">
+                  ⚡ Repair 0-Byte Corrupted Files (<span id="doctor-btn-corrupt-lbl">0</span>)
+                </button>
+                <button id="btn-doctor-repair-all-defects" class="btn btn-primary btn-sm" style="display:none; font-weight:600;">
+                  🔄 Sync All Defects (<span id="doctor-btn-all-lbl">0</span>)
+                </button>
+                <button id="btn-doctor-repair-selected" class="btn btn-secondary btn-sm" style="display:none;">
+                  🔧 Repair Selected (<span id="doctor-selected-count">0</span>)
+                </button>
+                <button id="btn-doctor-copy-list" class="btn btn-secondary btn-sm" title="Copy defective file paths to clipboard">
+                  📋 Copy List
+                </button>
+              </div>
+            </div>
+
+            <!-- Defective Files Table -->
+            <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; overflow:hidden;">
+              <div style="max-height: 480px; overflow-y: auto;">
+                <table style="width:100%; border-collapse:collapse; font-size:12px; text-align:left;">
+                  <thead style="background:rgba(255,255,255,0.03); position:sticky; top:0; z-index:2; border-bottom:1px solid var(--border-color);">
+                    <tr>
+                      <th style="padding:10px 12px; width:36px; text-align:center;">
+                        <input type="checkbox" id="chk-doctor-select-all">
+                      </th>
+                      <th style="padding:10px 12px; font-weight:600; color:var(--text-muted);">Relative Path & File</th>
+                      <th style="padding:10px 12px; font-weight:600; color:var(--text-muted); width:110px;">Master Size</th>
+                      <th style="padding:10px 12px; font-weight:600; color:var(--text-muted); width:110px;">Backup Size</th>
+                      <th style="padding:10px 12px; font-weight:600; color:var(--text-muted); width:160px;">Diagnosis</th>
+                      <th style="padding:10px 12px; font-weight:600; color:var(--text-muted); width:100px; text-align:right;">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="doctor-tbody-files">
+                    <tr>
+                      <td colspan="6" style="padding:30px; text-align:center; color:var(--text-muted);">No files to display.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- Empty placeholder before first audit -->
+          <div id="doctor-empty-state" style="padding:48px 24px; text-align:center; background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; margin-top:4px;">
+            <div style="font-size:36px; margin-bottom:12px;">🩺</div>
+            <h3 style="font-size:16px; font-weight:600; margin-bottom:6px;">Compare Master vs Backup Drives</h3>
+            <p style="font-size:13px; color:var(--text-muted); max-width:540px; margin:0 auto 16px;">
+              Select your master source (e.g. NAS) and target backup folder, then click <strong>Audit & Diagnose</strong> to detect 0-byte corrupt stubs, missing media, and size mismatches with atomic repair safety.
+            </p>
+          </div>
+        </div>
+
+        <!-- 6B. SSD SPACE RECLAIMER SUBPANEL (Existing Database Comparison) -->
+        <div id="panel-sync-reclaim" style="display:none;">
+          <div class="toolbar" style="margin-bottom:16px;">
+            <div class="toolbar-group">
+              <label style="font-size: 13px; color:var(--text-muted)">Primary Working Directory:</label>
+              <select id="sel-sync-working" style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:6px 10px; border-radius:6px; font-size:13px;"></select>
+
+              <label style="font-size: 13px; color:var(--text-muted); margin-left:10px;">Backup Directory:</label>
+              <select id="sel-sync-backup" style="background:var(--bg-card); color:#fff; border:1px solid var(--border-color); padding:6px 10px; border-radius:6px; font-size:13px;"></select>
+
+              <button id="btn-compare-sync" class="btn btn-secondary btn-sm" style="margin-left: 10px;">Compare Directories</button>
+            </div>
+            <div class="toolbar-group">
+              <button id="btn-reclaim-safe-ssd" class="btn btn-primary btn-sm">Reclaim Space from Primary Directory</button>
+            </div>
+          </div>
+
+          <div id="sync-summary-card" class="stat-card emerald" style="display:none; margin-bottom: 20px;">
+            <div class="stat-label">Verified Safe Reclaimable Space</div>
+            <div class="stat-val" id="sync-reclaimable-size">0.0 GB</div>
+            <div class="stat-sub" id="sync-reclaimable-desc">These files exist in your Backup Directory with matching cryptographic hashes and are 100% safe to delete from your Primary Working Directory.</div>
+          </div>
+
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            <div>
+              <h4 style="margin-bottom: 10px; font-size: 14px; color:var(--accent-emerald);">Verified in Backup (Safe to Reclaim)</h4>
+              <div id="synced-safe-list" style="max-height: 400px; overflow-y: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px;">
+                <p style="color:var(--text-muted); font-size:13px;">Select directories and click Compare to analyze sync status.</p>
+              </div>
+            </div>
+            <div>
+              <h4 style="margin-bottom: 10px; font-size: 14px; color:var(--accent-rose);">Unbacked Up (Needs Copy to Backup Directory)</h4>
+              <div id="unbacked-up-list" style="max-height: 400px; overflow-y: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px;">
+                <p style="color:var(--text-muted); font-size:13px;">Select directories and click Compare to analyze sync status.</p>
+              </div>
             </div>
           </div>
         </div>

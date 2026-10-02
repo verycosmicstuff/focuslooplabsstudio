@@ -38,6 +38,7 @@ from src.analyzer.deduper import DuplicateDetector
 from src.transcoder.engine import transcode_queue, TRANSCODE_PROFILES
 from src.transcoder.handbrake import HandBrakeBridge
 from src.sync.tracker import SyncTracker
+from src.sync.doctor import backup_doctor
 from src.organizer.manager import FileOrganizer
 from src.analyzer.video_advisor import analyze_video_suitability, format_bitrate
 from src.proofing.watermarker import (
@@ -1603,6 +1604,58 @@ def reclaim_sync_files(file_ids: List[int]):
         details=res
     )
     return res
+
+# ----------------- BACKUP DOCTOR & MIRROR REPAIR -----------------
+
+@app.post("/api/sync/doctor/audit")
+def doctor_audit_folders(payload: Dict[str, Any]):
+    source_path = payload.get("source_path", "").strip()
+    target_path = payload.get("target_path", "").strip()
+    if not source_path or not target_path:
+        raise HTTPException(status_code=400, detail="source_path and target_path are required.")
+    try:
+        return backup_doctor.audit_folders(source_path, target_path)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"BackupDoctor audit error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/sync/doctor/repair")
+def doctor_start_repair(payload: Dict[str, Any]):
+    source_path = payload.get("source_path", "").strip()
+    target_path = payload.get("target_path", "").strip()
+    mode = payload.get("mode", "corrupted_only")
+    selected_files = payload.get("selected_files")
+    if not source_path or not target_path:
+        raise HTTPException(status_code=400, detail="source_path and target_path are required.")
+    try:
+        res = backup_doctor.start_repair(
+            source_dir=source_path,
+            target_dir=target_path,
+            mode=mode,
+            selected_rel_paths=selected_files
+        )
+        record_last_task(
+            task_type="backup_doctor_repair",
+            summary=f"Started {mode} repair from {Path(source_path).name} to {Path(target_path).name}",
+            details=res
+        )
+        return res
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"BackupDoctor repair error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/sync/doctor/status")
+def doctor_get_status():
+    return backup_doctor.get_status()
+
+@app.post("/api/sync/doctor/cancel")
+def doctor_cancel_repair():
+    success = backup_doctor.cancel_repair()
+    return {"cancelled": success}
 
 # ----------------- SMART ORGANIZER -----------------
 

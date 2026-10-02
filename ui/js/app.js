@@ -225,7 +225,7 @@ document.querySelectorAll('.nav-item').forEach(item => {
       culler: 'Blur & Burst Photo Culler',
       duplicates: 'Duplicate Media Finder',
       transcoder: 'GPU-Accelerated H.265 Transcoder (NVENC)',
-      sync: 'Primary & Backup Directory Sync Matrix',
+      sync: 'Backup Doctor & Mirror Sync',
       organizer: 'Smart Media Organizer',
       proofing: 'Client Proofing, Watermarking & Selects',
       tags: 'Media Tags, Speakers & Catalog Manager',
@@ -1839,23 +1839,516 @@ window.queueSingleVideo = async function(fid) {
   }
 };
 
+// ==========================================
+// 6. BACKUP DOCTOR & MIRROR SYNC ENGINE
+// ==========================================
+
+let doctorAuditData = null;
+let doctorActiveFilter = 'defects';
+let doctorPollTimer = null;
+let doctorSelectedFiles = new Set();
+
 async function loadSync() {
   if (sourcesData.length === 0) {
-    const res = await fetch(API_BASE + '/api/sources');
-    sourcesData = await res.json();
+    try {
+      const res = await fetch(API_BASE + '/api/sources');
+      sourcesData = await res.json();
+    } catch (e) {
+      console.error(e);
+    }
   }
   const selWorking = document.getElementById('sel-sync-working');
   const selBackup = document.getElementById('sel-sync-backup');
-  selWorking.innerHTML = '';
-  selBackup.innerHTML = '';
+  if (selWorking && selBackup) {
+    selWorking.innerHTML = '';
+    selBackup.innerHTML = '';
 
-  sourcesData.forEach(s => {
-    selWorking.innerHTML += '<option value="' + s.id + '">' + s.label + ' (' + s.path + ')</option>';
-    selBackup.innerHTML += '<option value="' + s.id + '">' + s.label + ' (' + s.path + ')</option>';
+    sourcesData.forEach(s => {
+      selWorking.innerHTML += '<option value="' + s.id + '">' + s.label + ' (' + s.path + ')</option>';
+      selBackup.innerHTML += '<option value="' + s.id + '">' + s.label + ' (' + s.path + ')</option>';
+    });
+
+    if (sourcesData.length > 1) {
+      selBackup.selectedIndex = 1;
+    }
+  }
+
+  // Restore cached inputs for Backup Doctor if empty
+  const srcInput = document.getElementById('txt-doctor-src');
+  const tgtInput = document.getElementById('txt-doctor-tgt');
+  if (srcInput && !srcInput.value) {
+    const savedSrc = localStorage.getItem('savespace_doctor_src');
+    if (savedSrc) srcInput.value = savedSrc;
+  }
+  if (tgtInput && !tgtInput.value) {
+    const savedTgt = localStorage.getItem('savespace_doctor_tgt');
+    if (savedTgt) tgtInput.value = savedTgt;
+  }
+
+  checkDoctorRunningStatus();
+}
+
+// Sub-mode tabs: Doctor vs Reclaim
+document.getElementById('btn-sync-subtab-doctor')?.addEventListener('click', () => {
+  document.getElementById('panel-backup-doctor').style.display = 'block';
+  document.getElementById('panel-sync-reclaim').style.display = 'none';
+  document.getElementById('btn-sync-subtab-doctor').className = 'btn btn-primary btn-sm';
+  document.getElementById('btn-sync-subtab-reclaim').className = 'btn btn-secondary btn-sm';
+});
+
+document.getElementById('btn-sync-subtab-reclaim')?.addEventListener('click', () => {
+  document.getElementById('panel-backup-doctor').style.display = 'none';
+  document.getElementById('panel-sync-reclaim').style.display = 'block';
+  document.getElementById('btn-sync-subtab-reclaim').className = 'btn btn-primary btn-sm';
+  document.getElementById('btn-sync-subtab-doctor').className = 'btn btn-secondary btn-sm';
+});
+
+// Browse buttons
+document.getElementById('btn-doctor-browse-src')?.addEventListener('click', async () => {
+  try {
+    const res = await fetch(API_BASE + '/api/utils/pick_folder', { method: 'POST' });
+    const data = await res.json();
+    if (data.selected && data.path) {
+      document.getElementById('txt-doctor-src').value = data.path;
+      localStorage.setItem('savespace_doctor_src', data.path);
+    }
+  } catch (e) {
+    console.error('Folder picker error:', e);
+  }
+});
+
+document.getElementById('btn-doctor-browse-tgt')?.addEventListener('click', async () => {
+  try {
+    const res = await fetch(API_BASE + '/api/utils/pick_folder', { method: 'POST' });
+    const data = await res.json();
+    if (data.selected && data.path) {
+      document.getElementById('txt-doctor-tgt').value = data.path;
+      localStorage.setItem('savespace_doctor_tgt', data.path);
+    }
+  } catch (e) {
+    console.error('Folder picker error:', e);
+  }
+});
+
+// Swap button
+document.getElementById('btn-doctor-swap')?.addEventListener('click', () => {
+  const srcEl = document.getElementById('txt-doctor-src');
+  const tgtEl = document.getElementById('txt-doctor-tgt');
+  const tmp = srcEl.value;
+  srcEl.value = tgtEl.value;
+  tgtEl.value = tmp;
+  localStorage.setItem('savespace_doctor_src', srcEl.value);
+  localStorage.setItem('savespace_doctor_tgt', tgtEl.value);
+});
+
+// Audit button
+document.getElementById('btn-doctor-audit')?.addEventListener('click', async () => {
+  await auditDoctorFolders();
+});
+
+async function auditDoctorFolders() {
+  const srcPath = document.getElementById('txt-doctor-src').value.trim();
+  const tgtPath = document.getElementById('txt-doctor-tgt').value.trim();
+
+  if (!srcPath || !tgtPath) {
+    alert('Please specify both Master/Source Directory and Target/Backup Directory!');
+    return;
+  }
+  if (srcPath.toLowerCase() === tgtPath.toLowerCase()) {
+    alert('Source and Target directories must be different!');
+    return;
+  }
+
+  const btnAudit = document.getElementById('btn-doctor-audit');
+  const originalHtml = btnAudit.innerHTML;
+  btnAudit.disabled = true;
+  btnAudit.innerHTML = '<span>⏳</span> Auditing Folders...';
+
+  try {
+    const res = await fetch(API_BASE + '/api/sync/doctor/audit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source_path: srcPath, target_path: tgtPath })
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Audit request failed');
+    }
+
+    doctorAuditData = await res.json();
+    localStorage.setItem('savespace_doctor_src', srcPath);
+    localStorage.setItem('savespace_doctor_tgt', tgtPath);
+
+    renderDoctorAuditSummary(doctorAuditData);
+  } catch (e) {
+    alert('Audit failed: ' + e.message);
+  } finally {
+    btnAudit.disabled = false;
+    btnAudit.innerHTML = originalHtml;
+  }
+}
+
+function renderDoctorAuditSummary(data) {
+  const sum = data.summary;
+  document.getElementById('doctor-empty-state').style.display = 'none';
+  document.getElementById('doctor-results-container').style.display = 'block';
+
+  // Stats cards
+  document.getElementById('doctor-stat-src-size').innerText = formatBytes(sum.source_total_bytes);
+  document.getElementById('doctor-stat-src-files').innerText = `${sum.source_file_count.toLocaleString()} files`;
+  document.getElementById('doctor-stat-tgt-size').innerText = formatBytes(sum.target_total_bytes);
+  document.getElementById('doctor-stat-tgt-files').innerText = `${sum.target_file_count.toLocaleString()} files`;
+
+  document.getElementById('doctor-stat-corrupt-count').innerText = sum.corrupted_count;
+  document.getElementById('doctor-stat-corrupt-bytes').innerText = `${formatBytes(sum.corrupted_bytes)} to repair`;
+
+  document.getElementById('doctor-stat-missing-count').innerText = sum.missing_count;
+  document.getElementById('doctor-stat-missing-bytes').innerText = `${formatBytes(sum.missing_bytes)} to sync`;
+
+  document.getElementById('doctor-stat-healthy-count').innerText = sum.healthy_count.toLocaleString();
+
+  // Badges
+  const allDefectsCount = sum.corrupted_count + sum.missing_count + sum.mismatch_count;
+  document.getElementById('doctor-badge-all-defects').innerText = allDefectsCount;
+  document.getElementById('doctor-badge-corrupt').innerText = sum.corrupted_count;
+  document.getElementById('doctor-badge-missing').innerText = sum.missing_count;
+  document.getElementById('doctor-badge-mismatch').innerText = sum.mismatch_count;
+  document.getElementById('doctor-badge-healthy').innerText = sum.healthy_count;
+
+  // Action buttons
+  const btnCorrupt = document.getElementById('btn-doctor-repair-corrupt');
+  const btnAllDefects = document.getElementById('btn-doctor-repair-all-defects');
+
+  if (sum.corrupted_count > 0) {
+    btnCorrupt.style.display = 'inline-flex';
+    document.getElementById('doctor-btn-corrupt-lbl').innerText = `${sum.corrupted_count} · ${formatBytes(sum.corrupted_bytes)}`;
+  } else {
+    btnCorrupt.style.display = 'none';
+  }
+
+  if (allDefectsCount > 0) {
+    btnAllDefects.style.display = 'inline-flex';
+    document.getElementById('doctor-btn-all-lbl').innerText = `${allDefectsCount} · ${formatBytes(sum.corrupted_bytes + sum.missing_bytes)}`;
+  } else {
+    btnAllDefects.style.display = 'none';
+  }
+
+  // Default active filter
+  if (sum.corrupted_count > 0) {
+    doctorActiveFilter = 'corrupted';
+  } else if (allDefectsCount > 0) {
+    doctorActiveFilter = 'defects';
+  } else {
+    doctorActiveFilter = 'healthy';
+  }
+
+  // Update filter pill styles
+  document.querySelectorAll('.btn-doctor-filter').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.filter === doctorActiveFilter);
   });
 
-  if (sourcesData.length > 1) {
-    selBackup.selectedIndex = 1;
+  doctorSelectedFiles.clear();
+  updateDoctorSelectedCount();
+  renderDoctorTable();
+}
+
+// Filter button clicks
+document.querySelectorAll('.btn-doctor-filter').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.btn-doctor-filter').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    doctorActiveFilter = btn.dataset.filter;
+    renderDoctorTable();
+  });
+});
+
+function renderDoctorTable() {
+  if (!doctorAuditData) return;
+
+  const tbody = document.getElementById('doctor-tbody-files');
+  tbody.innerHTML = '';
+
+  let list = [];
+  if (doctorActiveFilter === 'corrupted') {
+    list = doctorAuditData.corrupted_files || [];
+  } else if (doctorActiveFilter === 'missing') {
+    list = doctorAuditData.missing_files || [];
+  } else if (doctorActiveFilter === 'mismatch') {
+    list = doctorAuditData.mismatched_files || [];
+  } else if (doctorActiveFilter === 'defects') {
+    list = [
+      ...(doctorAuditData.corrupted_files || []),
+      ...(doctorAuditData.missing_files || []),
+      ...(doctorAuditData.mismatched_files || [])
+    ];
+  } else if (doctorActiveFilter === 'healthy') {
+    list = (doctorAuditData.healthy_files || []).slice(0, 100);
+    if (list.length === 0 && doctorAuditData.summary.healthy_count > 0) {
+      tbody.innerHTML = `<tr><td colspan="6" style="padding:30px; text-align:center; color:var(--accent-emerald);">✅ All ${doctorAuditData.summary.healthy_count.toLocaleString()} healthy files match byte-for-byte between master and backup.</td></tr>`;
+      return;
+    }
+  }
+
+  if (list.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" style="padding:30px; text-align:center; color:var(--text-muted);">No files match the "${doctorActiveFilter}" filter.</td></tr>`;
+    return;
+  }
+
+  list.forEach(item => {
+    const isChecked = doctorSelectedFiles.has(item.rel_path);
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid rgba(255,255,255,0.04)';
+    tr.style.transition = 'background 0.15s ease';
+    tr.onmouseenter = () => tr.style.background = 'rgba(255,255,255,0.02)';
+    tr.onmouseleave = () => tr.style.background = 'transparent';
+
+    let badgeHtml = '';
+    if (item.issue === 'corrupted_zero_byte') {
+      badgeHtml = `<span style="background:rgba(244,63,94,0.15); color:var(--accent-rose); border:1px solid rgba(244,63,94,0.3); padding:2px 8px; border-radius:10px; font-weight:600; font-size:11px;">🚨 0-Byte Corrupt</span>`;
+    } else if (item.issue === 'missing') {
+      badgeHtml = `<span style="background:rgba(245,158,11,0.15); color:var(--accent-amber); border:1px solid rgba(245,158,11,0.3); padding:2px 8px; border-radius:10px; font-weight:600; font-size:11px;">⚠️ Missing on Backup</span>`;
+    } else if (item.issue === 'size_mismatch') {
+      badgeHtml = `<span style="background:rgba(6,182,212,0.15); color:var(--accent-cyan); border:1px solid rgba(6,182,212,0.3); padding:2px 8px; border-radius:10px; font-weight:600; font-size:11px;">⚖️ Size Mismatch</span>`;
+    } else {
+      badgeHtml = `<span style="background:rgba(16,185,129,0.15); color:var(--accent-emerald); border:1px solid rgba(16,185,129,0.3); padding:2px 8px; border-radius:10px; font-weight:600; font-size:11px;">✅ Healthy</span>`;
+    }
+
+    const srcSize = item.source_size !== undefined ? formatBytes(item.source_size) : formatBytes(item.size);
+    const tgtSize = item.target_size !== undefined ? (item.target_size === 0 && item.source_size > 0 ? '<span style="color:var(--accent-rose); font-weight:600;">0 B (Empty)</span>' : formatBytes(item.target_size)) : srcSize;
+
+    tr.innerHTML = `
+      <td style="padding:8px 12px; text-align:center;">
+        <input type="checkbox" class="chk-doctor-file" data-rel="${encodeURIComponent(item.rel_path)}" ${isChecked ? 'checked' : ''}>
+      </td>
+      <td style="padding:8px 12px; font-family:monospace; color:var(--text-main); word-break:break-all;">
+        <strong>${item.filename}</strong>
+        <div style="font-size:11px; color:var(--text-muted);">${item.rel_path}</div>
+      </td>
+      <td style="padding:8px 12px; font-family:monospace; color:var(--text-main);">${srcSize}</td>
+      <td style="padding:8px 12px; font-family:monospace;">${tgtSize}</td>
+      <td style="padding:8px 12px;">${badgeHtml}</td>
+      <td style="padding:8px 12px; text-align:right;">
+        <button class="btn btn-secondary btn-sm btn-doctor-single-repair" data-rel="${encodeURIComponent(item.rel_path)}" style="padding:3px 8px; font-size:11px;">
+          🔧 Fix
+        </button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  // Attach checkbox listeners
+  tbody.querySelectorAll('.chk-doctor-file').forEach(chk => {
+    chk.addEventListener('change', (e) => {
+      const rel = decodeURIComponent(e.target.dataset.rel);
+      if (e.target.checked) {
+        doctorSelectedFiles.add(rel);
+      } else {
+        doctorSelectedFiles.delete(rel);
+      }
+      updateDoctorSelectedCount();
+    });
+  });
+
+  // Attach single-repair button listeners
+  tbody.querySelectorAll('.btn-doctor-single-repair').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const rel = decodeURIComponent(e.target.dataset.rel);
+      startDoctorRepair('selected', [rel]);
+    });
+  });
+
+  const chkAll = document.getElementById('chk-doctor-select-all');
+  if (chkAll) {
+    chkAll.checked = false;
+  }
+}
+
+// Select All Checkbox
+document.getElementById('chk-doctor-select-all')?.addEventListener('change', (e) => {
+  const isChecked = e.target.checked;
+  const checkboxes = document.querySelectorAll('.chk-doctor-file');
+  checkboxes.forEach(chk => {
+    chk.checked = isChecked;
+    const rel = decodeURIComponent(chk.dataset.rel);
+    if (isChecked) {
+      doctorSelectedFiles.add(rel);
+    } else {
+      doctorSelectedFiles.delete(rel);
+    }
+  });
+  updateDoctorSelectedCount();
+});
+
+function updateDoctorSelectedCount() {
+  const count = doctorSelectedFiles.size;
+  const btnSelected = document.getElementById('btn-doctor-repair-selected');
+  const lblSelected = document.getElementById('doctor-selected-count');
+  if (lblSelected) lblSelected.innerText = count;
+  if (btnSelected) {
+    btnSelected.style.display = count > 0 ? 'inline-flex' : 'none';
+  }
+}
+
+// Repair button actions
+document.getElementById('btn-doctor-repair-corrupt')?.addEventListener('click', () => {
+  if (!doctorAuditData) return;
+  const count = doctorAuditData.summary.corrupted_count;
+  const bytes = formatBytes(doctorAuditData.summary.corrupted_bytes);
+  if (!confirm(`Repair ${count} 0-byte corrupted files (${bytes}) by safely copying from Master to Target?\n\nFiles will be streamed into temporary atomic files with checksum verification before replacing corrupt entries.`)) {
+    return;
+  }
+  startDoctorRepair('corrupted_only');
+});
+
+document.getElementById('btn-doctor-repair-all-defects')?.addEventListener('click', () => {
+  if (!doctorAuditData) return;
+  const sum = doctorAuditData.summary;
+  const count = sum.corrupted_count + sum.missing_count + sum.mismatch_count;
+  const bytes = formatBytes(sum.corrupted_bytes + sum.missing_bytes);
+  if (!confirm(`Sync & repair all ${count} defective/missing files (${bytes}) from Master to Target?\n\nFiles will be atomically written and modification timestamps preserved.`)) {
+    return;
+  }
+  startDoctorRepair('all_defects');
+});
+
+document.getElementById('btn-doctor-repair-selected')?.addEventListener('click', () => {
+  if (doctorSelectedFiles.size === 0) return;
+  const files = Array.from(doctorSelectedFiles);
+  if (!confirm(`Repair ${files.length} selected files from Master to Target?`)) {
+    return;
+  }
+  startDoctorRepair('selected', files);
+});
+
+// Copy defect list to clipboard
+document.getElementById('btn-doctor-copy-list')?.addEventListener('click', () => {
+  if (!doctorAuditData) return;
+  const defects = [
+    ...(doctorAuditData.corrupted_files || []),
+    ...(doctorAuditData.missing_files || []),
+    ...(doctorAuditData.mismatched_files || [])
+  ];
+  if (defects.length === 0) {
+    alert('No defective files to copy.');
+    return;
+  }
+  const lines = defects.map(d => `[${d.issue}] ${d.rel_path} (Source: ${formatBytes(d.source_size)}, Target: ${formatBytes(d.target_size)})`);
+  navigator.clipboard.writeText(lines.join('\n')).then(() => {
+    alert(`Copied ${defects.length} defective file paths to clipboard!`);
+  }).catch(e => {
+    console.error(e);
+  });
+});
+
+// Cancel active repair
+document.getElementById('btn-doctor-cancel')?.addEventListener('click', async () => {
+  if (!confirm('Are you sure you want to stop the repair transfer? Current file will be cleaned up safely.')) return;
+  try {
+    await fetch(API_BASE + '/api/sync/doctor/cancel', { method: 'POST' });
+  } catch (e) {
+    console.error('Cancel error:', e);
+  }
+});
+
+async function startDoctorRepair(mode, selectedFiles = null) {
+  const srcPath = document.getElementById('txt-doctor-src').value.trim();
+  const tgtPath = document.getElementById('txt-doctor-tgt').value.trim();
+
+  try {
+    const res = await fetch(API_BASE + '/api/sync/doctor/repair', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source_path: srcPath,
+        target_path: tgtPath,
+        mode: mode,
+        selected_files: selectedFiles
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to start repair');
+    }
+
+    document.getElementById('doctor-progress-card').style.display = 'block';
+    startDoctorProgressPolling();
+  } catch (e) {
+    alert('Could not start repair: ' + e.message);
+  }
+}
+
+function startDoctorProgressPolling() {
+  if (doctorPollTimer) clearInterval(doctorPollTimer);
+  doctorPollTimer = setInterval(async () => {
+    await pollDoctorStatus();
+  }, 600);
+  pollDoctorStatus();
+}
+
+async function checkDoctorRunningStatus() {
+  try {
+    const res = await fetch(API_BASE + '/api/sync/doctor/status');
+    const st = await res.json();
+    if (st.is_running) {
+      document.getElementById('doctor-progress-card').style.display = 'block';
+      startDoctorProgressPolling();
+    }
+  } catch (e) {
+    // Ignore network error on startup
+  }
+}
+
+async function pollDoctorStatus() {
+  try {
+    const res = await fetch(API_BASE + '/api/sync/doctor/status');
+    const st = await res.json();
+
+    const card = document.getElementById('doctor-progress-card');
+    const titleEl = document.getElementById('doctor-progress-title');
+    const barEl = document.getElementById('doctor-progress-bar');
+    const speedEl = document.getElementById('doctor-progress-speed');
+    const counterEl = document.getElementById('doctor-progress-counter');
+    const bytesEl = document.getElementById('doctor-progress-bytes');
+    const fileEl = document.getElementById('doctor-progress-file');
+
+    if (st.is_running) {
+      card.style.display = 'block';
+      titleEl.innerText = `Repairing Files (${st.mode.replace('_', ' ')})...`;
+      barEl.style.width = `${st.progress_pct}%`;
+      speedEl.innerText = `${st.speed_mb_s} MB/s`;
+      counterEl.innerText = `${st.completed_files} / ${st.total_files} files`;
+      bytesEl.innerText = `${formatBytes(st.transferred_bytes)} / ${formatBytes(st.total_bytes)} (${st.progress_pct}%)`;
+      fileEl.innerText = st.current_file ? `Syncing: ${st.current_file}` : 'Processing...';
+    } else {
+      if (doctorPollTimer) {
+        clearInterval(doctorPollTimer);
+        doctorPollTimer = null;
+      }
+
+      if (st.status === 'completed') {
+        barEl.style.width = '100%';
+        titleEl.innerText = `✅ Repair Complete! ${st.completed_files} files verified & repaired.`;
+        fileEl.innerText = 'All items verified healthy.';
+        speedEl.innerText = '0.0 MB/s';
+        setTimeout(() => {
+          card.style.display = 'none';
+        }, 5000);
+        // Automatically re-audit to refresh table to 100% healthy
+        auditDoctorFolders();
+      } else if (st.status === 'completed_with_errors') {
+        titleEl.innerText = `⚠️ Repair finished with ${st.errors.length} error(s).`;
+        fileEl.innerText = st.errors.join('; ');
+        setTimeout(() => { card.style.display = 'none'; }, 8000);
+        auditDoctorFolders();
+      } else if (st.status === 'cancelled') {
+        titleEl.innerText = '🛑 Repair cancelled by user.';
+        setTimeout(() => { card.style.display = 'none'; }, 3000);
+      }
+    }
+  } catch (e) {
+    console.error('Doctor status polling error:', e);
   }
 }
 
