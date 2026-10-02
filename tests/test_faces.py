@@ -396,7 +396,81 @@ class TestFaceEngineAndCatalog(unittest.TestCase):
         self.assertIsNotNone(tag_row)
         self.assertEqual(tag_row[0], "Target Agent")
 
+    def test_11_upload_and_find_face(self):
+        """Test uploading a photo to detect faces, register a person, and launch hunt across all folders."""
+        from unittest.mock import MagicMock, patch
+        import base64
+
+        # Generate a test image
+        test_img = np.zeros((300, 300, 3), dtype=np.uint8)
+        cv2.circle(test_img, (150, 150), 60, (200, 200, 200), -1)
+        _, img_buf = cv2.imencode(".jpg", test_img)
+        img_bytes = img_buf.tobytes()
+        b64_str = base64.b64encode(img_bytes).decode("utf-8")
+
+        mock_face = np.array([[100.0, 100.0, 100.0, 100.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.95]])
+        mock_detector = MagicMock()
+        mock_detector.detect.return_value = (None, mock_face)
+
+        mock_recognizer = MagicMock()
+        mock_recognizer.alignCrop.return_value = np.zeros((112, 112, 3), dtype=np.uint8)
+
+        synthetic_vec = np.ones(128, dtype=np.float32) / np.sqrt(128)
+
+        with patch("src.analyzer.face_engine._get_detector", return_value=mock_detector), \
+             patch("src.analyzer.face_engine._get_recognizer", return_value=mock_recognizer), \
+             patch("src.analyzer.face_engine._extract_feature", return_value=synthetic_vec):
+
+            # 1. Test detect_faces_preview
+            preview = face_engine.detect_faces_preview(img_bytes)
+            self.assertEqual(len(preview), 1)
+            self.assertEqual(preview[0]["face_index"], 0)
+            self.assertGreaterEqual(preview[0]["confidence"], 0.9)
+            self.assertTrue(preview[0]["data_url"].startswith("data:image/jpeg;base64,"))
+
+            # 2. Test create_person_from_image
+            reg = face_engine.create_person_from_image(
+                image_bytes=img_bytes,
+                filename="alice_portrait.jpg",
+                person_name="Alice Candidate",
+                face_index=0
+            )
+            self.assertIn("person_id", reg)
+            self.assertEqual(reg["person_name"], "Alice Candidate")
+            self.assertIn("avatar_url", reg)
+
+            # Check DB record
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM people WHERE id = ?", (reg["person_id"],))
+            self.assertEqual(cursor.fetchone()[0], "Alice Candidate")
+
+            # Check reference file inserted
+            cursor.execute("SELECT status, source_id FROM files WHERE id = (SELECT file_id FROM face_detections WHERE id = ?)", (reg["face_id"],))
+            file_row = cursor.fetchone()
+            self.assertEqual(file_row[0], "reference")
+            self.assertEqual(file_row[1], -1)
+
+            # 3. Test POST /api/faces/detect-preview API
+            resp_prev = self.client.post("/api/faces/detect-preview", json={"image_base64": b64_str})
+            self.assertEqual(resp_prev.status_code, 200)
+            data_prev = resp_prev.json()
+            self.assertEqual(data_prev["count"], 1)
+
+            # 4. Test POST /api/faces/upload-and-find API
+            resp_hunt = self.client.post("/api/faces/upload-and-find", json={
+                "image_base64": b64_str,
+                "name": "Detective Holmes",
+                "face_index": 0,
+                "step_sec": 1.5
+            })
+            self.assertEqual(resp_hunt.status_code, 200)
+            data_hunt = resp_hunt.json()
+            self.assertEqual(data_hunt["status"], "started")
+            self.assertEqual(data_hunt["person"]["person_name"], "Detective Holmes")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

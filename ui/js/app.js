@@ -6331,6 +6331,326 @@ function setupFacesEventListeners() {
       }
     });
   }
+  // Setup upload photo face hunt modal
+  setupUploadFaceSearchModal();
+}
+
+// Setup Upload Photo to Find Face Modal
+function setupUploadFaceSearchModal() {
+  const modal = document.getElementById('modal-upload-face-search');
+  const btnOpen = document.getElementById('btn-upload-face-search');
+  if (!modal || !btnOpen) return;
+
+  const dropzone = document.getElementById('dropzone-face-upload');
+  const fileInput = document.getElementById('file-face-upload-input');
+  const btnBrowseNative = document.getElementById('btn-browse-native-face');
+  const previewBox = document.getElementById('box-face-upload-preview');
+  const imgPreview = document.getElementById('img-face-upload-preview');
+  const lblFilename = document.getElementById('lbl-face-upload-filename');
+  const lblStatus = document.getElementById('lbl-face-upload-status');
+  const btnChange = document.getElementById('btn-change-uploaded-photo');
+  const choiceBox = document.getElementById('box-face-choice-selector');
+  const choiceChips = document.getElementById('container-face-choice-chips');
+  const txtName = document.getElementById('txt-upload-face-name');
+  const btnConfirm = document.getElementById('btn-confirm-upload-face-search');
+
+  let currentFileBlob = null;
+  let currentFilePath = null;
+  let currentDetectedFaces = [];
+  let selectedFaceIndex = 0;
+
+  function resetState() {
+    currentFileBlob = null;
+    currentFilePath = null;
+    currentDetectedFaces = [];
+    selectedFaceIndex = 0;
+    if (fileInput) fileInput.value = '';
+    if (txtName) txtName.value = '';
+    if (choiceChips) choiceChips.innerHTML = '';
+    if (choiceBox) choiceBox.style.display = 'none';
+    if (previewBox) previewBox.style.display = 'none';
+    if (dropzone) {
+      dropzone.style.display = 'block';
+      dropzone.style.borderColor = 'rgba(6, 182, 212, 0.4)';
+      dropzone.style.background = 'rgba(6, 182, 212, 0.04)';
+    }
+    if (btnConfirm) {
+      btnConfirm.disabled = true;
+      btnConfirm.innerHTML = '🎯 Find This Face in All Folders';
+    }
+  }
+
+  modal.querySelectorAll('.modal-close').forEach(b => {
+    b.addEventListener('click', () => {
+      modal.classList.remove('active');
+    });
+  });
+
+  btnOpen.addEventListener('click', () => {
+    resetState();
+    modal.classList.add('active');
+  });
+
+  if (btnChange) {
+    btnChange.addEventListener('click', () => {
+      resetState();
+    });
+  }
+
+  // File input trigger & drag-and-drop
+  if (dropzone && fileInput) {
+    dropzone.addEventListener('click', (e) => {
+      if (e.target === btnBrowseNative || btnBrowseNative.contains(e.target)) return;
+      fileInput.click();
+    });
+
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (file) handleSelectedFile(file);
+    });
+
+    dropzone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropzone.style.borderColor = 'var(--accent-cyan)';
+      dropzone.style.background = 'rgba(6, 182, 212, 0.12)';
+    });
+    dropzone.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      dropzone.style.borderColor = 'rgba(6, 182, 212, 0.4)';
+      dropzone.style.background = 'rgba(6, 182, 212, 0.04)';
+    });
+    dropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropzone.style.borderColor = 'rgba(6, 182, 212, 0.4)';
+      dropzone.style.background = 'rgba(6, 182, 212, 0.04)';
+      const file = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (file) handleSelectedFile(file);
+    });
+  }
+
+  // Native explorer browse button
+  if (btnBrowseNative) {
+    btnBrowseNative.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        const res = await fetch(API_BASE + '/api/utils/pick_file', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: 'Select Reference Photo for Face Hunt',
+            type: 'image'
+          })
+        });
+        const data = await res.json();
+        if (data.selected && data.path) {
+          handleSelectedNativePath(data.path, data.filename);
+        }
+      } catch (err) {
+        showToast('Error selecting file: ' + err.message, 'error');
+      }
+    });
+  }
+
+  async function handleSelectedFile(file) {
+    currentFileBlob = file;
+    currentFilePath = null;
+    selectedFaceIndex = 0;
+
+    dropzone.style.display = 'none';
+    previewBox.style.display = 'flex';
+    lblFilename.textContent = file.name;
+    lblStatus.textContent = 'Analyzing faces with AI...';
+    lblStatus.style.color = 'var(--accent-cyan)';
+    btnConfirm.disabled = true;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      if (imgPreview) imgPreview.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+
+    const stem = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+    if (!/^(image|photo|img|upload|pic|reference|screenshot|dsc|p_)/i.test(stem)) {
+      if (txtName && !txtName.value) txtName.value = stem.replace(/[_-]/g, ' ');
+    }
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch(`${API_BASE}/api/faces/detect-preview`, {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed to detect faces');
+      processDetectionResults(data.faces || []);
+    } catch (err) {
+      lblStatus.textContent = '❌ ' + err.message;
+      lblStatus.style.color = '#ef4444';
+      btnConfirm.disabled = true;
+    }
+  }
+
+  async function handleSelectedNativePath(filePath, fileName) {
+    currentFileBlob = null;
+    currentFilePath = filePath;
+    selectedFaceIndex = 0;
+
+    dropzone.style.display = 'none';
+    previewBox.style.display = 'flex';
+    lblFilename.textContent = fileName || filePath.split('\\').pop();
+    lblStatus.textContent = 'Analyzing faces with AI...';
+    lblStatus.style.color = 'var(--accent-cyan)';
+    btnConfirm.disabled = true;
+
+    const baseName = lblFilename.textContent;
+    const stem = baseName.substring(0, baseName.lastIndexOf('.')) || baseName;
+    if (!/^(image|photo|img|upload|pic|reference|screenshot|dsc|p_)/i.test(stem)) {
+      if (txtName && !txtName.value) txtName.value = stem.replace(/[_-]/g, ' ');
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/api/faces/detect-preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: filePath })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed to detect faces');
+      const faces = data.faces || [];
+      if (faces.length > 0 && faces[0].data_url && imgPreview) {
+        imgPreview.src = faces[0].data_url;
+      }
+      processDetectionResults(faces);
+    } catch (err) {
+      lblStatus.textContent = '❌ ' + err.message;
+      lblStatus.style.color = '#ef4444';
+      btnConfirm.disabled = true;
+    }
+  }
+
+  function processDetectionResults(faces) {
+    currentDetectedFaces = faces;
+    selectedFaceIndex = 0;
+
+    if (!faces || faces.length === 0) {
+      lblStatus.textContent = '⚠️ No faces detected. Please choose a clearer photo with a visible face.';
+      lblStatus.style.color = '#f59e0b';
+      btnConfirm.disabled = true;
+      if (choiceBox) choiceBox.style.display = 'none';
+      return;
+    }
+
+    if (faces.length === 1) {
+      lblStatus.textContent = `✓ 1 face detected (${Math.round(faces[0].confidence * 100)}% match confidence). Ready!`;
+      lblStatus.style.color = '#10b981';
+      btnConfirm.disabled = false;
+      if (choiceBox) choiceBox.style.display = 'none';
+    } else {
+      lblStatus.textContent = `✓ ${faces.length} faces detected! Select the person you want to hunt for:`;
+      lblStatus.style.color = '#06b6d4';
+      btnConfirm.disabled = false;
+      if (choiceBox) choiceBox.style.display = 'flex';
+      renderFaceChips(faces);
+    }
+  }
+
+  function renderFaceChips(faces) {
+    if (!choiceChips) return;
+    choiceChips.innerHTML = '';
+    faces.forEach((f, idx) => {
+      const chip = document.createElement('div');
+      chip.style.cssText = `
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        cursor: pointer;
+        padding: 4px;
+        border-radius: 8px;
+        border: 2px solid ${idx === selectedFaceIndex ? 'var(--accent-cyan)' : 'transparent'};
+        background: ${idx === selectedFaceIndex ? 'rgba(6, 182, 212, 0.15)' : 'rgba(255, 255, 255, 0.05)'};
+        transition: all 0.15s ease;
+      `;
+      chip.innerHTML = `
+        <img src="${f.data_url}" alt="Face ${idx + 1}" style="width: 56px; height: 56px; border-radius: 6px; object-fit: cover;">
+        <span style="font-size: 10px; color: ${idx === selectedFaceIndex ? 'var(--accent-cyan)' : 'var(--text-muted)'}; font-weight: 600;">Person ${idx + 1}</span>
+      `;
+      chip.addEventListener('click', () => {
+        selectedFaceIndex = f.face_index !== undefined ? f.face_index : idx;
+        Array.from(choiceChips.children).forEach((c, cIdx) => {
+          c.style.borderColor = cIdx === idx ? 'var(--accent-cyan)' : 'transparent';
+          c.style.background = cIdx === idx ? 'rgba(6, 182, 212, 0.15)' : 'rgba(255, 255, 255, 0.05)';
+          const label = c.querySelector('span');
+          if (label) {
+            label.style.color = cIdx === idx ? 'var(--accent-cyan)' : 'var(--text-muted)';
+          }
+        });
+      });
+      choiceChips.appendChild(chip);
+    });
+  }
+
+  // Confirm and start targeted search
+  if (btnConfirm) {
+    btnConfirm.addEventListener('click', async () => {
+      const name = txtName ? txtName.value.trim() : '';
+
+      btnConfirm.disabled = true;
+      btnConfirm.innerHTML = '⏳ Uploading & Launching Hunt...';
+
+      try {
+        let res;
+        if (currentFileBlob) {
+          const fd = new FormData();
+          fd.append('file', currentFileBlob);
+          if (name) fd.append('name', name);
+          fd.append('face_index', selectedFaceIndex);
+          fd.append('step_sec', 1.5);
+          fd.append('force_rescan', false);
+
+          res = await fetch(`${API_BASE}/api/faces/upload-and-find`, {
+            method: 'POST',
+            body: fd
+          });
+        } else if (currentFilePath) {
+          res = await fetch(`${API_BASE}/api/faces/upload-and-find`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              path: currentFilePath,
+              name: name || undefined,
+              face_index: selectedFaceIndex,
+              step_sec: 1.5,
+              force_rescan: false
+            })
+          });
+        } else {
+          throw new Error('No photo selected');
+        }
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Search initialization failed');
+
+        const person = data.person || {};
+        const pName = person.person_name || name || `Person ${person.person_id}`;
+
+        modal.classList.remove('active');
+        showToast(`Started targeted search for "${pName}" across all folders!`, 'success');
+
+        loadFacesCatalog();
+        checkFaceScanStatus();
+
+        if (person.person_id) {
+          openPersonDetail(person.person_id);
+        }
+      } catch (err) {
+        showToast('Failed to start search: ' + err.message, 'error');
+        btnConfirm.disabled = false;
+        btnConfirm.innerHTML = '🎯 Find This Face in All Folders';
+      }
+    });
+  }
 }
 
 // Initialize People & Faces listeners on page ready
@@ -6339,4 +6659,5 @@ if (document.readyState === 'loading') {
 } else {
   setupFacesEventListeners();
 }
+
 

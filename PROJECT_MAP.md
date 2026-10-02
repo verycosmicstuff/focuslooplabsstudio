@@ -16,14 +16,14 @@
 - `ui/`: Responsive dark dashboard (`index.html`, `js/app.js`, `css/app.css`).
 
 ## Recent Changes
-- Released **v2.2.1** of Local **People & Faces** engine:
+- Released **v2.3.0** of Local **People & Faces** engine:
   - SQLite tables `people` & `face_detections` with 128-d vector embeddings and avatar thumbnails.
   - CUDA GPU acceleration on RTX 3060 (~2.02 ms per face) + CPU thread clamping.
   - Media type filtering (`all`, `video`, `photo`) and sort modes (`video_count`, `photo_count`, `count`, `name`, `recent`).
   - Targeted single-person search (`find-everywhere`) across unindexed files and folders.
-  - Live real-time scan updates and on-the-fly clustering.
+  - Upload Reference Photo: Drop or browse any external photo, auto-extract face chips for selection, register person, and launch instant background hunt across all folders.
   - Fixed thumbnail route pluralization and added picture-in-picture face crop overlay badges with local disk fallback.
-- 52/52 unit tests passing.
+- 53/53 unit tests passing.
 
 ## Active Objective
 - Assist user with testing, live workflow verification, and production usage.

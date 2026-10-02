@@ -6,7 +6,7 @@ import subprocess
 import threading
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -1737,6 +1737,114 @@ def api_find_person_everywhere(person_id: int, payload: Optional[Dict[str, Any]]
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/faces/detect-preview")
+async def api_detect_faces_preview(
+    request: Request,
+    file: Optional[UploadFile] = File(None),
+    path: Optional[str] = Form(None)
+):
+    try:
+        content_type = request.headers.get("content-type", "")
+        img_bytes = None
+        if content_type.startswith("application/json"):
+            body = await request.json()
+            if "path" in body and os.path.isfile(body["path"]):
+                img_bytes = Path(body["path"]).read_bytes()
+            elif "image_base64" in body:
+                raw_b64 = body["image_base64"]
+                if "," in raw_b64:
+                    raw_b64 = raw_b64.split(",", 1)[1]
+                import base64
+                img_bytes = base64.b64decode(raw_b64)
+        elif file:
+            img_bytes = await file.read()
+        elif path and os.path.isfile(path):
+            img_bytes = Path(path).read_bytes()
+
+        if not img_bytes:
+            raise HTTPException(status_code=400, detail="Photo file or valid path required")
+
+        preview_faces = face_engine.detect_faces_preview(img_bytes)
+        return {"faces": preview_faces, "count": len(preview_faces)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error previewing faces in uploaded file: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/faces/upload-and-find")
+async def api_upload_and_find_face(
+    request: Request,
+    file: Optional[UploadFile] = File(None),
+    path: Optional[str] = Form(None),
+    name: Optional[str] = Form(None),
+    face_index: int = Form(0),
+    step_sec: float = Form(1.5),
+    force_rescan: bool = Form(False)
+):
+    try:
+        content_type = request.headers.get("content-type", "")
+        filename = "upload.jpg"
+        img_bytes = None
+        person_name = name
+        f_idx = face_index
+        s_sec = step_sec
+        f_rescan = force_rescan
+
+        if content_type.startswith("application/json"):
+            body = await request.json()
+            person_name = body.get("name")
+            f_idx = int(body.get("face_index", 0))
+            s_sec = float(body.get("step_sec", 1.5))
+            f_rescan = bool(body.get("force_rescan", False))
+
+            if "path" in body and os.path.isfile(body["path"]):
+                filename = Path(body["path"]).name
+                img_bytes = Path(body["path"]).read_bytes()
+            elif "image_base64" in body:
+                raw_b64 = body["image_base64"]
+                if "," in raw_b64:
+                    raw_b64 = raw_b64.split(",", 1)[1]
+                import base64
+                img_bytes = base64.b64decode(raw_b64)
+        elif file:
+            filename = file.filename or "upload.jpg"
+            img_bytes = await file.read()
+        elif path and os.path.isfile(path):
+            filename = Path(path).name
+            img_bytes = Path(path).read_bytes()
+
+        if not img_bytes:
+            raise HTTPException(status_code=400, detail="Photo file or valid path required")
+
+        # 1. Register Person and face detection
+        reg_info = face_engine.create_person_from_image(
+            image_bytes=img_bytes,
+            filename=filename,
+            person_name=person_name,
+            face_index=f_idx
+        )
+
+        person_id = reg_info["person_id"]
+
+        # 2. Launch targeted scan across all folders immediately
+        scan_info = face_engine.start_target_scan(
+            person_id=person_id,
+            step_sec=s_sec,
+            force_rescan=f_rescan
+        )
+
+        return {
+            "status": "started",
+            "person": reg_info,
+            "scan": scan_info
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error in upload-and-find: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/faces/people/{person_id}")
 def api_get_person(person_id: int):

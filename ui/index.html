@@ -1052,7 +1052,10 @@
             </div>
 
             <!-- Action buttons -->
-            <button id="btn-open-face-scan" class="btn btn-primary btn-sm" style="padding: 6px 12px; gap: 5px;">
+            <button id="btn-upload-face-search" class="btn btn-primary btn-sm" style="padding: 6px 12px; gap: 5px; background: linear-gradient(135deg, #06b6d4, #8b5cf6); border: none;" title="Upload any picture from your PC to find that person's face across all drives and folders">
+              📤 Upload Pic to Find Face
+            </button>
+            <button id="btn-open-face-scan" class="btn btn-secondary btn-sm" style="padding: 6px 12px; gap: 5px;">
               🔍 Scan for Faces
             </button>
             <button id="btn-recluster-faces" class="btn btn-secondary btn-sm" style="padding: 6px 12px; gap: 5px;" title="Group newly detected or unassigned faces">
@@ -1696,6 +1699,64 @@
       <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px;">
         <button class="btn btn-secondary modal-close">Cancel</button>
         <button id="btn-modal-confirm-start-scan" class="btn btn-primary">Start Face Scanning</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Upload Photo to Find Face Modal -->
+  <div id="modal-upload-face-search" class="modal-overlay" style="z-index: 9999;">
+    <div class="modal-dialog" style="max-width: 520px;">
+      <div class="modal-header">
+        <h3 style="font-size: 16px;">📤 Upload Photo to Find Face Across All Folders</h3>
+        <button class="btn btn-secondary btn-sm modal-close">&times;</button>
+      </div>
+      <div class="modal-body" style="display: flex; flex-direction: column; gap: 14px;">
+        <p style="font-size: 12px; color: var(--text-muted); margin: 0; line-height: 1.5;">
+          Select or drop any photo from your computer (portrait, selfie, group shot, or client picture). 
+          The local AI will extract their digital face fingerprint and instantly hunt for them across all your drives and folders!
+        </p>
+
+        <!-- Dropzone / Picker -->
+        <div id="dropzone-face-upload" style="border: 2px dashed rgba(6, 182, 212, 0.4); background: rgba(6, 182, 212, 0.04); border-radius: 10px; padding: 24px 16px; text-align: center; cursor: pointer; transition: all 0.2s ease;">
+          <input type="file" id="file-face-upload-input" accept="image/jpeg,image/png,image/webp,image/bmp,image/tiff" style="display: none;">
+          <div style="font-size: 32px; margin-bottom: 6px;">🖼️</div>
+          <div style="font-size: 13px; font-weight: 600; color: #fff; margin-bottom: 4px;">Click to browse, or drag &amp; drop a photo here</div>
+          <div style="font-size: 11px; color: var(--text-muted);">Supports JPG, PNG, WEBP, BMP, TIFF</div>
+          <div style="margin-top: 10px;">
+            <button type="button" id="btn-browse-native-face" class="btn btn-secondary btn-sm" style="font-size: 11px; padding: 4px 10px;">📁 Open File Explorer...</button>
+          </div>
+        </div>
+
+        <!-- Preview Stage (hidden until photo chosen) -->
+        <div id="box-face-upload-preview" style="display: none; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; flex-direction: column; gap: 10px;">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <img id="img-face-upload-preview" src="" alt="Selected Preview" style="width: 72px; height: 72px; border-radius: 8px; object-fit: cover; border: 1px solid var(--border-color);">
+            <div style="flex: 1; min-width: 0;">
+              <div id="lbl-face-upload-filename" style="font-size: 13px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">photo.jpg</div>
+              <div id="lbl-face-upload-status" style="font-size: 11px; color: var(--accent-cyan); margin-top: 2px;">Analyzing faces with AI...</div>
+            </div>
+            <button type="button" id="btn-change-uploaded-photo" class="btn btn-secondary btn-sm" style="font-size: 11px; padding: 3px 8px;">Change</button>
+          </div>
+
+          <!-- Multiple Detected Faces Selector (populated if > 1 face) -->
+          <div id="box-face-choice-selector" style="display: none; flex-direction: column; gap: 6px;">
+            <label style="font-size: 11px; font-weight: 600; color: var(--accent-cyan);">Multiple faces detected! Click which person to search for:</label>
+            <div id="container-face-choice-chips" style="display: flex; gap: 8px; flex-wrap: wrap;"></div>
+          </div>
+
+          <!-- Person Name Input -->
+          <div>
+            <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Name this Person (Optional):</label>
+            <input type="text" id="txt-upload-face-name" placeholder="e.g. Alex, Mom, Client A..." style="width: 100%; background: var(--bg-secondary); color: #fff; border: 1px solid var(--border-color); padding: 7px 10px; border-radius: 6px; font-size: 13px;">
+          </div>
+        </div>
+
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px;">
+        <button class="btn btn-secondary modal-close">Cancel</button>
+        <button id="btn-confirm-upload-face-search" class="btn btn-primary" disabled style="background: linear-gradient(135deg, #06b6d4, #8b5cf6); border: none;">
+          🎯 Find This Face in All Folders
+        </button>
       </div>
     </div>
   </div>

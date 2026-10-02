@@ -10,6 +10,7 @@ from typing import Optional, List, Dict, Any, Tuple
 import sqlite3
 import cv2
 import numpy as np
+import base64
 from PIL import Image, ImageOps
 
 from src.config import (
@@ -1080,6 +1081,206 @@ class FaceEngine:
                 "target_person_id": person_id,
                 "target_person_name": person_name
             }
+
+    def detect_faces_preview(self, image_bytes: bytes) -> List[Dict[str, Any]]:
+        """
+        Detect faces in image bytes and return crops as base64 data URLs
+        for live UI preview and face selection before searching.
+        """
+        ensure_models()
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if bgr is None:
+            raise ValueError("Could not decode image file")
+
+        h, w = bgr.shape[:2]
+        detector = _get_detector(input_size=(w, h))
+
+        _, faces = detector.detect(bgr)
+        if faces is None or len(faces) == 0:
+            max_dim = 1280
+            if max(w, h) > max_dim:
+                scale = max_dim / max(w, h)
+                sw, sh = int(w * scale), int(h * scale)
+                scaled = cv2.resize(bgr, (sw, sh), interpolation=cv2.INTER_AREA)
+                detector_scaled = _get_detector(input_size=(sw, sh))
+                _, faces = detector_scaled.detect(scaled)
+                if faces is not None:
+                    faces[:, 0:4] /= scale
+                    faces[:, 4:14] /= scale
+
+        if faces is None or len(faces) == 0:
+            return []
+
+        valid_faces = [f for f in faces if float(f[14]) >= 0.55]
+        if not valid_faces and len(faces) > 0:
+            valid_faces = [faces[0]]
+
+        valid_faces.sort(key=lambda f: float(f[2]) * float(f[3]), reverse=True)
+
+        results = []
+        for idx, face in enumerate(valid_faces):
+            margin_x = int(face[2] * 0.35)
+            margin_y = int(face[3] * 0.35)
+            x1 = max(0, int(face[0]) - margin_x)
+            y1 = max(0, int(face[1]) - margin_y)
+            x2 = min(w, int(face[0] + face[2]) + margin_x)
+            y2 = min(h, int(face[1] + face[3]) + margin_y)
+            crop = bgr[y1:y2, x1:x2].copy()
+
+            ch, cw = crop.shape[:2]
+            if max(cw, ch) > 200:
+                sc = 200.0 / max(cw, ch)
+                crop = cv2.resize(crop, (int(cw * sc), int(ch * sc)), interpolation=cv2.INTER_AREA)
+
+            _, buf = cv2.imencode(".jpg", crop, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
+            b64_str = base64.b64encode(buf.tobytes()).decode("utf-8")
+
+            results.append({
+                "face_index": idx,
+                "box": [int(face[0]), int(face[1]), int(face[2]), int(face[3])],
+                "confidence": round(float(face[14]), 3),
+                "data_url": f"data:image/jpeg;base64,{b64_str}"
+            })
+
+        return results
+
+    def create_person_from_image(
+        self,
+        image_bytes: bytes,
+        filename: str = "upload.jpg",
+        person_name: Optional[str] = None,
+        face_index: int = 0
+    ) -> Dict[str, Any]:
+        """
+        Extract face from image bytes, register as a new Person, save reference
+        file and face crop avatar, and return person record info.
+        """
+        ensure_models()
+
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if bgr is None:
+            raise ValueError("Could not decode image file")
+
+        h, w = bgr.shape[:2]
+        detector = _get_detector(input_size=(w, h))
+        recognizer = _get_recognizer()
+
+        _, faces = detector.detect(bgr)
+        if faces is None or len(faces) == 0:
+            max_dim = 1280
+            if max(w, h) > max_dim:
+                scale = max_dim / max(w, h)
+                sw, sh = int(w * scale), int(h * scale)
+                scaled = cv2.resize(bgr, (sw, sh), interpolation=cv2.INTER_AREA)
+                detector_scaled = _get_detector(input_size=(sw, sh))
+                _, faces = detector_scaled.detect(scaled)
+                if faces is not None:
+                    faces[:, 0:4] /= scale
+                    faces[:, 4:14] /= scale
+
+        if faces is None or len(faces) == 0:
+            raise ValueError("No faces detected in the image. Please upload a clear photo with a visible face.")
+
+        valid_faces = [f for f in faces if float(f[14]) >= 0.55]
+        if not valid_faces:
+            valid_faces = [faces[0]]
+
+        valid_faces.sort(key=lambda f: float(f[2]) * float(f[3]), reverse=True)
+        target_face = valid_faces[min(face_index, len(valid_faces) - 1)]
+
+        aligned = recognizer.alignCrop(bgr, target_face)
+        feature = _extract_feature(aligned, recognizer)
+        feat_bytes = feature.astype(np.float32).tobytes()
+
+        margin_x = int(target_face[2] * 0.35)
+        margin_y = int(target_face[3] * 0.35)
+        x1 = max(0, int(target_face[0]) - margin_x)
+        y1 = max(0, int(target_face[1]) - margin_y)
+        x2 = min(w, int(target_face[0] + target_face[2]) + margin_x)
+        y2 = min(h, int(target_face[1] + target_face[3]) + margin_y)
+        crop = bgr[y1:y2, x1:x2].copy()
+
+        uploads_dir = DATA_DIR / "uploads" / "faces"
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+        clean_fname = Path(filename).name or "reference.jpg"
+        timestamp_prefix = int(time.time())
+        saved_ref_path = uploads_dir / f"{timestamp_prefix}_{clean_fname}"
+        cv2.imwrite(str(saved_ref_path), bgr)
+
+        # Name resolution
+        if not person_name or not person_name.strip():
+            base = Path(clean_fname).stem.replace("_", " ").title()
+            if base.lower() in ("image", "photo", "img", "upload", "pic", "reference", "screenshot", "download"):
+                conn_cnt = get_db()
+                cur_cnt = conn_cnt.cursor()
+                cur_cnt.execute("SELECT COUNT(*) FROM people WHERE name LIKE 'Uploaded Person%'")
+                cnt = cur_cnt.fetchone()[0] + 1
+                person_name = f"Uploaded Person {cnt}"
+            else:
+                person_name = base
+        else:
+            person_name = person_name.strip()
+
+        with db_transaction() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT id FROM sources WHERE id = -1")
+            if not cursor.fetchone():
+                cursor.execute("INSERT OR IGNORE INTO sources (id, path, label, drive_type) VALUES (-1, 'Internal References', 'Reference Uploads', 'LOCAL')")
+
+            cursor.execute("""
+                INSERT INTO files (source_id, rel_path, abs_path, filename, ext, size_bytes, mtime, ctime, media_type, status)
+                VALUES (-1, ?, ?, ?, ?, ?, ?, ?, 'photo', 'reference')
+            """, (
+                str(saved_ref_path.name),
+                str(saved_ref_path.resolve()),
+                saved_ref_path.name,
+                saved_ref_path.suffix.lower(),
+                saved_ref_path.stat().st_size,
+                int(time.time()),
+                int(time.time())
+            ))
+            ref_file_id = cursor.lastrowid
+
+            cursor.execute("INSERT INTO people (name) VALUES (?)", (person_name,))
+            new_person_id = cursor.lastrowid
+
+            bx, by, bw, bh = int(target_face[0]), int(target_face[1]), int(target_face[2]), int(target_face[3])
+            conf = float(target_face[14])
+            cursor.execute("""
+                INSERT INTO face_detections (
+                    file_id, person_id, timestamp_sec,
+                    box_x, box_y, box_w, box_h,
+                    confidence, embedding, thumbnail_path
+                ) VALUES (?, ?, 0.0, ?, ?, ?, ?, ?, ?, '')
+            """, (ref_file_id, new_person_id, bx, by, bw, bh, conf, feat_bytes))
+            new_face_id = cursor.lastrowid
+
+            crop_filename = f"{new_face_id}.jpg"
+            crop_path = FACES_DIR / crop_filename
+            ch, cw = crop.shape[:2]
+            if max(cw, ch) > 240:
+                sc = 240.0 / max(cw, ch)
+                crop_resized = cv2.resize(crop, (int(cw * sc), int(ch * sc)), interpolation=cv2.INTER_AREA)
+            else:
+                crop_resized = crop
+            cv2.imwrite(str(crop_path), crop_resized, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+
+            cursor.execute("UPDATE face_detections SET thumbnail_path = ? WHERE id = ?", (crop_filename, new_face_id))
+            cursor.execute("UPDATE people SET avatar_face_id = ? WHERE id = ?", (new_face_id, new_person_id))
+
+            if not person_name.startswith("Unnamed Person"):
+                cursor.execute("INSERT OR IGNORE INTO file_tags (file_id, tag, category) VALUES (?, ?, 'speaker')", (ref_file_id, person_name))
+
+        return {
+            "person_id": new_person_id,
+            "person_name": person_name,
+            "face_id": new_face_id,
+            "avatar_url": f"/api/faces/thumbnail/{new_face_id}",
+            "total_faces_detected": len(valid_faces)
+        }
 
     def cancel_scan(self) -> Dict[str, Any]:
         """Cancel the ongoing face scan."""
