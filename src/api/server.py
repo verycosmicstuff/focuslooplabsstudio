@@ -986,6 +986,7 @@ THUMB_CACHE_HEADERS = {
 }
 
 @app.get("/api/thumbnail/{file_id}")
+@app.get("/api/thumbnails/{file_id}")
 def get_thumbnail(file_id: int):
     # Ultra-fast path: return cached thumbnail directly from disk without SQLite lock
     cached_thumb = THUMBNAILS_DIR / f"{file_id}.jpg"

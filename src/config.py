@@ -54,13 +54,17 @@ def _resolve_logs_dir(data_dir: Path) -> Path:
 DATA_DIR = _resolve_data_dir()
 LOGS_DIR = _resolve_logs_dir(DATA_DIR)
 
-# Database path resolution: use focusloop.db, or use existing savespace.db if present
-if (DATA_DIR / "focusloop.db").exists():
-    DB_PATH = DATA_DIR / "focusloop.db"
-elif (DATA_DIR / "savespace.db").exists():
-    DB_PATH = DATA_DIR / "savespace.db"
+# Database path resolution: use focusloop.db or existing savespace.db (prefer whichever has data)
+_fl_db = DATA_DIR / "focusloop.db"
+_ss_db = DATA_DIR / "savespace.db"
+if _ss_db.exists() and (not _fl_db.exists() or _ss_db.stat().st_size > _fl_db.stat().st_size):
+    DB_PATH = _ss_db
+elif _fl_db.exists():
+    DB_PATH = _fl_db
+elif _ss_db.exists():
+    DB_PATH = _ss_db
 else:
-    DB_PATH = DATA_DIR / "focusloop.db"
+    DB_PATH = _fl_db
 THUMBNAILS_DIR = DATA_DIR / "thumbnails"
 THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
 

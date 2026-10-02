@@ -5763,8 +5763,9 @@ async function openPersonDetail(personId) {
           card.className = 'person-media-card';
 
           const isVideo = item.media_type === 'video';
-          const thumbUrl = `${API_BASE}/api/thumbnails/${item.file_id}`;
+          const thumbUrl = `${API_BASE}/api/thumbnail/${item.file_id}`;
           const faceItem = item.faces && item.faces.length > 0 ? item.faces[0] : null;
+          const faceThumbUrl = faceItem && faceItem.thumbnail_url ? `${API_BASE}${faceItem.thumbnail_url}` : '';
           const timeSec = faceItem ? faceItem.timestamp_sec : 0.0;
 
           // Format timestamp mm:ss
@@ -5774,7 +5775,10 @@ async function openPersonDetail(personId) {
 
           card.innerHTML = `
             <div class="person-media-thumb-wrap">
-              <img src="${thumbUrl}" class="person-media-thumb" loading="lazy" alt="${escapeHtml(item.filename)}" onerror="this.src='icons/app_icon.png'">
+              <img src="${thumbUrl}" class="person-media-thumb" loading="lazy" alt="${escapeHtml(item.filename)}" onerror="if (this.dataset.fb !== '1' && '${faceThumbUrl}') { this.dataset.fb = '1'; this.src = '${faceThumbUrl}'; } else { this.src = 'icons/app_icon.png'; }">
+              ${faceThumbUrl ? `
+                <img src="${faceThumbUrl}" style="position:absolute; top:8px; left:8px; width:36px; height:36px; border-radius:50%; border:2px solid var(--accent-cyan); object-fit:cover; z-index:3; box-shadow:0 2px 8px rgba(0,0,0,0.85);" title="Detected face in this photo/video">
+              ` : ''}
               ${isVideo ? `
                 <div class="face-timecode-badge" title="Jump to timestamp in video">
                   ▶ ${timecodeStr}
@@ -5975,8 +5979,9 @@ async function refreshActivePersonDetailMedia(personId) {
           const card = document.createElement('div');
           card.className = 'person-media-card';
           const isVideo = item.media_type === 'video';
-          const thumbUrl = `${API_BASE}/api/thumbnails/${item.file_id}`;
+          const thumbUrl = `${API_BASE}/api/thumbnail/${item.file_id}`;
           const faceItem = item.faces && item.faces.length > 0 ? item.faces[0] : null;
+          const faceThumbUrl = faceItem && faceItem.thumbnail_url ? `${API_BASE}${faceItem.thumbnail_url}` : '';
           const timeSec = faceItem ? faceItem.timestamp_sec : 0.0;
           const mins = Math.floor(timeSec / 60);
           const secs = Math.floor(timeSec % 60);
@@ -5984,7 +5989,10 @@ async function refreshActivePersonDetailMedia(personId) {
 
           card.innerHTML = `
             <div class="person-media-thumb-wrap">
-              <img src="${thumbUrl}" class="person-media-thumb" loading="lazy" alt="${escapeHtml(item.filename)}" onerror="this.src='icons/app_icon.png'">
+              <img src="${thumbUrl}" class="person-media-thumb" loading="lazy" alt="${escapeHtml(item.filename)}" onerror="if (this.dataset.fb !== '1' && '${faceThumbUrl}') { this.dataset.fb = '1'; this.src = '${faceThumbUrl}'; } else { this.src = 'icons/app_icon.png'; }">
+              ${faceThumbUrl ? `
+                <img src="${faceThumbUrl}" style="position:absolute; top:8px; left:8px; width:36px; height:36px; border-radius:50%; border:2px solid var(--accent-cyan); object-fit:cover; z-index:3; box-shadow:0 2px 8px rgba(0,0,0,0.85);" title="Detected face in this photo/video">
+              ` : ''}
               ${isVideo ? `<div class="face-timecode-badge" title="Jump to timestamp in video">▶ ${timecodeStr}</div>` : ''}
               ${faceItem ? `<button class="face-unlink-btn" title="Not this person? Remove from this group" data-face-id="${faceItem.face_id}">✕ Not this person</button>` : ''}
             </div>
