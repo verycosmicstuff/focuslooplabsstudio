@@ -16,14 +16,12 @@
 - `ui/`: Responsive dark dashboard (`index.html`, `js/app.js`, `css/app.css`).
 
 ## Recent Changes
-- Released **v2.3.2** of Local **People & Faces** engine:
-  - Fixed person media card "👁 View" and "▶ Play" buttons: wired to universal lightbox photo viewer with gallery arrow navigation, and system video player launcher.
-  - Added clickable thumbnail wrapper on media cards.
-  - CUDA GPU acceleration on RTX 3060 (~2.02 ms per face) + strict CPU thread clamping (`cv2.setNumThreads(1)`).
-  - Reduced CPU overhead: optimized video keyframe resolution to native 640x640 and added OS thread yield.
-  - Scoped Hunt: Target search and photo upload search can now be scoped to specific drives, subfolders, or media types.
-  - Upload Reference Photo: Auto-extract face chips for selection, register person, and launch instant background hunt.
-- 53/53 unit tests passing.
+- Released **v2.3.3** CI & macOS Release Pipeline Fix:
+  - Fixed macOS CI test suite failure: added `python-multipart` to `requirements.txt` and GitHub Actions workflow (required by FastAPI for file upload & form data endpoints).
+  - Fixed missing `import sys` in `src/config.py` and stripped UTF-8 BOM headers.
+  - Added `src.analyzer.face_engine` and `multipart` to PyInstaller hidden imports for macOS arm64 bundle.
+  - Made VideoToolbox transcode test resilient to zero-bloat file unlinking.
+- 53/53 unit tests passing cross-platform.
 
 ## Active Objective
-- Assist user with testing, live workflow verification, and production usage.
+- Verify macOS GitHub Actions build pipeline success and assist user with production usage.

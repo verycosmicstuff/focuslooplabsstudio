@@ -44,17 +44,23 @@ def ensure_models() -> bool:
 
         if not YUNET_PATH.exists() or YUNET_PATH.stat().st_size < 10000:
             logger.info(f"Downloading face detection model (YuNet) to {YUNET_PATH}...")
-            req = urllib.request.Request(YUNET_URL, headers=headers)
-            with urllib.request.urlopen(req, timeout=30) as resp, open(YUNET_PATH, "wb") as f:
-                shutil.copyfileobj(resp, f)
-            logger.info(f"YuNet downloaded successfully ({YUNET_PATH.stat().st_size} bytes)")
+            try:
+                req = urllib.request.Request(YUNET_URL, headers=headers)
+                with urllib.request.urlopen(req, timeout=30) as resp, open(YUNET_PATH, "wb") as f:
+                    shutil.copyfileobj(resp, f)
+                logger.info(f"YuNet downloaded successfully ({YUNET_PATH.stat().st_size} bytes)")
+            except Exception as e:
+                logger.warning(f"Could not download YuNet model: {e}")
 
         if not SFACE_PATH.exists() or SFACE_PATH.stat().st_size < 1000000:
             logger.info(f"Downloading face recognition model (SFace) to {SFACE_PATH}...")
-            req = urllib.request.Request(SFACE_URL, headers=headers)
-            with urllib.request.urlopen(req, timeout=45) as resp, open(SFACE_PATH, "wb") as f:
-                shutil.copyfileobj(resp, f)
-            logger.info(f"SFace downloaded successfully ({SFACE_PATH.stat().st_size} bytes)")
+            try:
+                req = urllib.request.Request(SFACE_URL, headers=headers)
+                with urllib.request.urlopen(req, timeout=45) as resp, open(SFACE_PATH, "wb") as f:
+                    shutil.copyfileobj(resp, f)
+                logger.info(f"SFace downloaded successfully ({SFACE_PATH.stat().st_size} bytes)")
+            except Exception as e:
+                logger.warning(f"Could not download SFace model: {e}")
 
         return YUNET_PATH.exists() and SFACE_PATH.exists()
 

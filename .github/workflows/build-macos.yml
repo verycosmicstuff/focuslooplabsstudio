@@ -41,7 +41,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install "pywebview[cocoa]" pyinstaller httpx
+          pip install "pywebview[cocoa]" pyinstaller httpx python-multipart
 
       - name: Run test suite on macOS
         run: |
@@ -68,9 +68,11 @@ jobs:
             --hidden-import "src.core.session" \
             --hidden-import "src.analyzer.culler" \
             --hidden-import "src.analyzer.deduper" \
+            --hidden-import "src.analyzer.face_engine" \
             --hidden-import "src.transcoder.engine" \
             --hidden-import "src.proofing.watermarker" \
             --hidden-import "src.proofing.contact_sheet" \
+            --hidden-import "multipart" \
             src/gui/app_window.py
 
       - name: Package Portable ZIP (Preserving Symlinks & Permissions)

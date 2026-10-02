@@ -1,4 +1,4 @@
-﻿from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional
 from pathlib import Path
 import send2trash
 from src.core.db import get_db

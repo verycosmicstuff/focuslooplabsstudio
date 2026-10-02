@@ -1,4 +1,4 @@
-﻿import os
+import os
 from pathlib import Path
 from typing import Optional, List, Tuple
 from src.config import RAW_EXTS, PHOTO_EXTS, SIDECAR_EXTS
