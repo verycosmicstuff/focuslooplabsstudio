@@ -4,7 +4,7 @@
 param(
     [string]$DistDir = "$PSScriptRoot\..\dist\FocusloopLabs",
     [string]$PythonHost = "",
-    [string]$Version = "v2.0",
+    [string]$Version = "v2.1",
     [switch]$SkipPython,
     [switch]$MakeZip
 )

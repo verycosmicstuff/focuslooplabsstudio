@@ -77,7 +77,7 @@ jobs:
         run: |
           cd dist
           TAG="${GITHUB_REF#refs/tags/}"
-          if [[ "$TAG" != v* ]]; then TAG="v2.0"; fi
+          if [[ "$TAG" != v* ]]; then TAG="v2.1"; fi
           ZIP_NAME="FocusloopStudio-${TAG}-macOS-arm64-Portable.zip"
           echo "Packaging $ZIP_NAME..."
           ditto -c -k --keepParent "Focusloop Studio.app" "$ZIP_NAME"
