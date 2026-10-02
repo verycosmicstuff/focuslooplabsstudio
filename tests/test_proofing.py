@@ -25,7 +25,7 @@ class TestProofingAndWatermark(unittest.TestCase):
 
         cls.test_dir = Path(__file__).resolve().parent / "mock_proofing"
         if cls.test_dir.exists():
-            shutil.rmtree(cls.test_dir)
+            shutil.rmtree(cls.test_dir, ignore_errors=True)
         cls.test_dir.mkdir(parents=True, exist_ok=True)
 
         cls.orig_db_path = src.config.DB_PATH

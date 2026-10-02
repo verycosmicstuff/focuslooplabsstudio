@@ -41,7 +41,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install "pywebview[cocoa]" pyinstaller
+          pip install "pywebview[cocoa]" pyinstaller httpx
 
       - name: Run test suite on macOS
         run: |

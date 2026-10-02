@@ -89,3 +89,21 @@ class BatchTagAction(BaseModel):
     action: str = "add" # "add", "remove"
     tags: List[Dict[str, str]] = []
 
+class FaceScanRequest(BaseModel):
+    source_id: Optional[int] = None
+    folder: Optional[str] = None
+    media_type: str = "all" # "all", "photo", "video"
+    step_sec: float = 1.5
+    force_rescan: bool = False
+
+class PersonRenameRequest(BaseModel):
+    name: str
+    sync_to_tags: bool = True
+
+class PersonMergeRequest(BaseModel):
+    target_person_id: int
+    source_person_ids: List[int]
+
+class FaceAssignRequest(BaseModel):
+    target_person_id: int
+

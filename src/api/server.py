@@ -14,14 +14,16 @@ import psutil
 from PIL import Image
 
 from src.config import (
-    BASE_DIR, THUMBNAILS_DIR, PERFORMANCE_MODES, DEFAULT_PORT, DEFAULT_HOST,
+    BASE_DIR, THUMBNAILS_DIR, FACES_DIR, PERFORMANCE_MODES, DEFAULT_PORT, DEFAULT_HOST,
     RAW_EXTS, PHOTO_EXTS, VIDEO_EXTS
 )
 from src.core.db import get_db, init_db, db_transaction
 from src.core.models import (
     SourceCreate, SourceExclusionsUpdate, SourceUpdate, CullingAction, TranscodeRequest,
-    OrganizeRule, FileTagsUpdate, FileNotesUpdate, BatchTagAction
+    OrganizeRule, FileTagsUpdate, FileNotesUpdate, BatchTagAction,
+    FaceScanRequest, PersonRenameRequest, PersonMergeRequest, FaceAssignRequest
 )
+from src.analyzer.face_engine import face_engine
 from src.core.tag_manager import TagManager
 from src.core.logger import get_logger, LOG_FILE, LOGS_DIR
 from src.core.session import get_session_state, save_session_state, record_last_task
@@ -893,7 +895,7 @@ def get_transcode_queue():
     total_jobs = len(items)
     completed_jobs = sum(1 for i in items if i["status"] == "completed")
     pending_jobs = sum(1 for i in items if i["status"] == "pending")
-    active_job = next((i for i in items if i["status"] == "transcoding"), None)
+    active_job = next((i for i in items if i["status"] in ("transcoding", "paused")), None)
     total_orig_bytes = sum(i["original_size"] for i in items)
     total_saved_bytes = sum(i["saved_bytes"] or 0 for i in items if i["status"] == "completed")
 
@@ -902,8 +904,10 @@ def get_transcode_queue():
         overall_progress = 0.0
     else:
         # Sum completed jobs as 100% plus active job's progress
-        weighted_sum = sum(100.0 if i["status"] == "completed" else (i["progress"] if i["status"] == "transcoding" else 0.0) for i in items)
+        weighted_sum = sum(100.0 if i["status"] in ("completed", "already_optimal") else (i["progress"] if i["status"] in ("transcoding", "paused") else 0.0) for i in items)
         overall_progress = round(weighted_sum / total_jobs, 1)
+
+    is_queue_paused = transcode_queue.is_paused or (transcode_queue.current_job.is_paused if transcode_queue.current_job else False)
 
     return {
         "items": items,
@@ -917,7 +921,7 @@ def get_transcode_queue():
             "total_orig_bytes": total_orig_bytes,
             "total_saved_bytes": total_saved_bytes,
             "is_running": transcode_queue.is_running,
-            "is_paused": transcode_queue.current_job.is_paused if transcode_queue.current_job else False
+            "is_paused": is_queue_paused
         }
     }
 
@@ -942,9 +946,9 @@ def control_transcode(action: str, value: Optional[str] = None):
     if action == "start":
         transcode_queue.start_worker_if_needed()
     elif action == "pause":
-        transcode_queue.pause_current()
+        transcode_queue.pause()
     elif action == "resume":
-        transcode_queue.resume_current()
+        transcode_queue.resume()
     elif action == "set_perf_mode" and value:
         transcode_queue.set_performance_mode(value)
     elif action == "cancel" and value:
@@ -952,7 +956,7 @@ def control_transcode(action: str, value: Optional[str] = None):
     elif action == "clear_completed":
         with db_transaction() as tx:
             tx.execute("DELETE FROM transcodes WHERE status IN ('completed', 'cancelled')")
-    return {"status": "ok", "current_mode": transcode_queue.perf_mode}
+    return {"status": "ok", "current_mode": transcode_queue.perf_mode, "is_paused": transcode_queue.is_paused}
 
 # ----------------- SYNC MATRIX -----------------
 
@@ -1680,6 +1684,101 @@ def api_open_logs_folder():
     except Exception as e:
         logger.error(f"Failed to open logs directory: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to open logs folder: {e}")
+
+# ----------------- FACE FINDING & PEOPLE CATALOG -----------------
+
+@app.post("/api/faces/scan")
+def api_start_face_scan(req: FaceScanRequest):
+    return face_engine.start_scan_job(
+        source_id=req.source_id,
+        folder_filter=req.folder,
+        media_type_filter=req.media_type,
+        step_sec=req.step_sec,
+        force_rescan=req.force_rescan
+    )
+
+@app.get("/api/faces/scan/status")
+def api_get_face_scan_status():
+    return face_engine.scan_state
+
+@app.post("/api/faces/scan/cancel")
+def api_cancel_face_scan():
+    return face_engine.cancel_scan()
+
+@app.get("/api/faces/people")
+def api_list_people(
+    source_id: Optional[int] = None,
+    folder: Optional[str] = None,
+    filter: str = "all",
+    sort: str = "count"
+):
+    return face_engine.list_people(
+        source_id=source_id,
+        folder_filter=folder,
+        filter_type=filter,
+        sort_by=sort
+    )
+
+@app.get("/api/faces/people/{person_id}")
+def api_get_person(person_id: int):
+    try:
+        return face_engine.get_person_details(person_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+@app.post("/api/faces/people/{person_id}/rename")
+def api_rename_person(person_id: int, req: PersonRenameRequest):
+    try:
+        return face_engine.rename_person(person_id, req.name, sync_to_tags=req.sync_to_tags)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/faces/people/merge")
+def api_merge_people(req: PersonMergeRequest):
+    try:
+        return face_engine.merge_people(req.target_person_id, req.source_person_ids)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.delete("/api/faces/people/{person_id}")
+def api_delete_person(person_id: int):
+    success = face_engine.delete_person(person_id)
+    return {"status": "deleted" if success else "failed"}
+
+@app.post("/api/faces/faces/{face_id}/unlink")
+def api_unlink_face(face_id: int):
+    success = face_engine.unlink_face(face_id)
+    return {"status": "unlinked" if success else "failed"}
+
+@app.post("/api/faces/faces/{face_id}/assign")
+def api_assign_face(face_id: int, req: FaceAssignRequest):
+    try:
+        success = face_engine.assign_face(face_id, req.target_person_id)
+        return {"status": "assigned" if success else "failed"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/faces/people/{person_id}/avatar")
+def api_set_person_avatar(person_id: int, payload: Dict[str, int]):
+    face_id = payload.get("face_id")
+    if not face_id:
+        raise HTTPException(status_code=400, detail="Missing face_id")
+    success = face_engine.set_person_avatar(person_id, face_id)
+    return {"status": "updated" if success else "failed"}
+
+@app.post("/api/faces/recluster")
+def api_recluster_faces(payload: Optional[Dict[str, float]] = None):
+    threshold = 0.40
+    if payload and "threshold" in payload:
+        threshold = float(payload["threshold"])
+    return face_engine.cluster_unassigned_faces(threshold=threshold)
+
+@app.get("/api/faces/thumbnail/{face_id}")
+def api_get_face_thumbnail(face_id: int):
+    thumb_path = FACES_DIR / f"{face_id}.jpg"
+    if not thumb_path.exists():
+        raise HTTPException(status_code=404, detail="Face thumbnail not found")
+    return FileResponse(str(thumb_path), media_type="image/jpeg")
 
 # Serve Frontend static assets
 UI_DIR = BASE_DIR / "ui"

@@ -228,7 +228,8 @@ document.querySelectorAll('.nav-item').forEach(item => {
       sync: 'Primary & Backup Directory Sync Matrix',
       organizer: 'Smart Media Organizer',
       proofing: 'Client Proofing, Watermarking & Selects',
-      tags: 'Media Tags, Speakers & Catalog Manager'
+      tags: 'Media Tags, Speakers & Catalog Manager',
+      faces: 'People & Faces Catalog (Google Photos Style)'
     };
     document.getElementById('current-view-title').innerText = titles[currentTab] || 'SaveSpace Pro';
     refreshCurrentTab();
@@ -254,19 +255,34 @@ document.querySelectorAll('.perf-btn').forEach(btn => {
   });
 });
 
-const btnTranscodePause = document.getElementById('btn-transcode-pause');
-btnTranscodePause.addEventListener('click', async () => {
-  isTranscodePaused = !isTranscodePaused;
-  const action = isTranscodePaused ? 'pause' : 'resume';
-  btnTranscodePause.innerText = isTranscodePaused ? 'Resume Transcodes' : 'Pause Transcodes';
-  btnTranscodePause.style.background = isTranscodePaused ? 'var(--accent-amber)' : '';
-
-  try {
-    await fetch(API_BASE + '/api/transcodes/control?action=' + action, { method: 'POST' });
-  } catch (e) {
-    console.error(e);
+function updateTranscodePauseUI(isPaused) {
+  isTranscodePaused = !!isPaused;
+  const btnTranscodePause = document.getElementById('btn-transcode-pause');
+  if (btnTranscodePause) {
+    btnTranscodePause.innerText = isTranscodePaused ? 'Resume Transcodes' : 'Pause Transcodes';
+    btnTranscodePause.style.background = isTranscodePaused ? 'var(--accent-amber)' : '';
   }
-});
+  const btnPauseQueue = document.getElementById('btn-pause-queue');
+  if (btnPauseQueue) {
+    btnPauseQueue.innerText = isTranscodePaused ? '▶ Resume' : '⏸ Pause';
+    btnPauseQueue.style.background = isTranscodePaused ? 'var(--accent-amber)' : '';
+  }
+}
+
+const btnTranscodePause = document.getElementById('btn-transcode-pause');
+if (btnTranscodePause) {
+  btnTranscodePause.addEventListener('click', async () => {
+    const action = isTranscodePaused ? 'resume' : 'pause';
+    try {
+      const res = await fetch(API_BASE + '/api/transcodes/control?action=' + action, { method: 'POST' });
+      const data = await res.json();
+      updateTranscodePauseUI(data.is_paused !== undefined ? data.is_paused : (action === 'pause'));
+      if (currentTab === 'transcoder') loadTranscoder();
+    } catch (e) {
+      console.error(e);
+    }
+  });
+}
 
 document.getElementById('btn-refresh-all').addEventListener('click', () => {
   refreshCurrentTab();
@@ -282,6 +298,7 @@ function refreshCurrentTab() {
   else if (currentTab === 'organizer') loadOrganizer();
   else if (currentTab === 'proofing') loadProofing();
   else if (currentTab === 'tags') loadTagsCatalog();
+  else if (currentTab === 'faces') loadFacesCatalog();
 }
 
 async function loadOverview() {
@@ -1371,6 +1388,9 @@ async function loadTranscoder() {
     currentCandidates = candidates;
     const summary = queueRes.summary;
 
+    // Sync Pause/Resume buttons across interface
+    updateTranscodePauseUI(summary.is_paused);
+
     // 1. MASTER QUEUE MONITOR (DUAL PROGRESS)
     document.getElementById('queue-counter-badge').innerText = '(' + summary.completed_jobs + ' / ' + summary.total_jobs + ' completed)';
     document.getElementById('queue-savings-badge').innerText = 'Saved: ' + formatBytes(summary.total_saved_bytes);
@@ -1378,14 +1398,26 @@ async function loadTranscoder() {
     document.getElementById('queue-progress-pct').innerText = summary.overall_progress + '%';
 
     const queueStatusText = document.getElementById('queue-status-text');
+    const isPaused = summary.is_paused || (summary.active_job && summary.active_job.status === 'paused');
     if (summary.active_job) {
-      queueStatusText.innerText = 'Processing ' + summary.active_job.filename + ' (' + (summary.completed_jobs + 1) + ' of ' + summary.total_jobs + ')';
+      if (isPaused) {
+        queueStatusText.innerText = '⏸ Paused: ' + summary.active_job.filename + ' (' + (summary.completed_jobs + 1) + ' of ' + summary.total_jobs + ')';
+        queueStatusText.style.color = 'var(--accent-amber)';
+      } else {
+        queueStatusText.innerText = 'Processing ' + summary.active_job.filename + ' (' + (summary.completed_jobs + 1) + ' of ' + summary.total_jobs + ')';
+        queueStatusText.style.color = 'var(--accent-cyan)';
+      }
     } else if (summary.total_jobs > 0 && summary.pending_jobs === 0) {
       queueStatusText.innerText = '✓ All ' + summary.total_jobs + ' queued transcodes completed!';
       queueStatusText.style.color = 'var(--accent-emerald)';
     } else if (summary.pending_jobs > 0) {
-      queueStatusText.innerText = summary.pending_jobs + ' job(s) pending in queue.';
-      queueStatusText.style.color = 'var(--text-muted)';
+      if (summary.is_paused) {
+        queueStatusText.innerText = '⏸ Queue is paused with ' + summary.pending_jobs + ' job(s) pending.';
+        queueStatusText.style.color = 'var(--accent-amber)';
+      } else {
+        queueStatusText.innerText = summary.pending_jobs + ' job(s) pending in queue.';
+        queueStatusText.style.color = 'var(--text-muted)';
+      }
     } else {
       queueStatusText.innerText = 'Queue is idle. Select videos below to start transcoding.';
       queueStatusText.style.color = 'var(--text-muted)';
@@ -1400,11 +1432,17 @@ async function loadTranscoder() {
     const activeSaved = document.getElementById('active-job-saved');
 
     if (summary.active_job) {
-      activeBox.style.borderColor = 'var(--accent-cyan)';
-      activeTitle.innerText = 'Currently Transcoding: ' + summary.active_job.filename;
+      const isJobPaused = summary.is_paused || summary.active_job.status === 'paused';
+      activeBox.style.borderColor = isJobPaused ? 'var(--accent-amber)' : 'var(--accent-cyan)';
+      activeTitle.innerText = (isJobPaused ? '⏸ Paused: ' : 'Currently Transcoding: ') + summary.active_job.filename;
       activePct.innerText = summary.active_job.progress + '%';
       activeFill.style.width = summary.active_job.progress + '%';
-      activeMetrics.innerText = 'Speed: ' + (summary.active_job.speed || 'N/A') + ' | FPS: ' + (summary.active_job.fps || 0);
+      activeFill.style.background = isJobPaused ? 'var(--accent-amber)' : 'var(--gradient-primary)';
+      if (isJobPaused) {
+        activeMetrics.innerHTML = '<span style="color:var(--accent-amber); font-weight:700;">⏸ PAUSED</span> | Speed: 0x | FPS: 0';
+      } else {
+        activeMetrics.innerText = 'Speed: ' + (summary.active_job.speed || 'N/A') + ' | FPS: ' + (summary.active_job.fps || 0);
+      }
       const profileRatio = getProfileRatio();
       const estSaved = Math.round(summary.active_job.original_size * profileRatio);
       activeSaved.innerText = 'Original: ' + formatBytes(summary.active_job.original_size) + ' | Est. Saved: ' + formatBytes(estSaved);
@@ -1413,6 +1451,7 @@ async function loadTranscoder() {
       activeTitle.innerText = 'Currently Transcoding: None';
       activePct.innerText = '0.0%';
       activeFill.style.width = '0%';
+      activeFill.style.background = 'var(--gradient-primary)';
       activeMetrics.innerText = 'Speed: 0x | FPS: 0';
       activeSaved.innerText = 'Projected Savings: 0 B';
     }
@@ -1438,6 +1477,8 @@ async function loadTranscoder() {
             statusBadge = '<span class="brand-badge" style="background:rgba(16,185,129,0.2); color:var(--accent-emerald);">✓ Done</span>';
           } else if (q.status === 'already_optimal') {
             statusBadge = '<span class="brand-badge" style="background:rgba(59,130,246,0.2); color:var(--accent-blue); cursor:help;" title="' + escapeHtml(q.error_msg || 'Original was already more compact than H.265') + '">🛡️ Kept Original (Optimal)</span>';
+          } else if (q.status === 'paused') {
+            statusBadge = '<span class="brand-badge" style="background:rgba(245,158,11,0.25); color:var(--accent-amber); font-weight:600;">⏸ Paused ' + (q.progress || 0) + '%</span>';
           } else if (q.status === 'transcoding') {
             statusBadge = '<span class="brand-badge" style="background:rgba(6,182,212,0.2); color:var(--accent-cyan);">Transcoding ' + (q.progress || 0) + '%</span>';
           } else if (q.status === 'pending') {
@@ -1753,7 +1794,9 @@ function bindTranscodeControls() {
   // Master queue controls
   document.getElementById('btn-start-queue').addEventListener('click', async () => {
     try {
-      await fetch(API_BASE + '/api/transcodes/control?action=start', { method: 'POST' });
+      const res = await fetch(API_BASE + '/api/transcodes/control?action=start', { method: 'POST' });
+      const data = await res.json();
+      updateTranscodePauseUI(false);
       loadTranscoder();
     } catch (e) {
       console.error(e);
@@ -1763,9 +1806,9 @@ function bindTranscodeControls() {
   document.getElementById('btn-pause-queue').addEventListener('click', async () => {
     try {
       const action = isTranscodePaused ? 'resume' : 'pause';
-      isTranscodePaused = !isTranscodePaused;
-      document.getElementById('btn-pause-queue').innerText = isTranscodePaused ? '▶ Resume' : '⏸ Pause';
-      await fetch(API_BASE + '/api/transcodes/control?action=' + action, { method: 'POST' });
+      const res = await fetch(API_BASE + '/api/transcodes/control?action=' + action, { method: 'POST' });
+      const data = await res.json();
+      updateTranscodePauseUI(data.is_paused !== undefined ? data.is_paused : (action === 'pause'));
       loadTranscoder();
     } catch (e) {
       console.error(e);

@@ -207,12 +207,16 @@ class TagManager:
         folder_map = {}
         for r in rows:
             try:
-                p = Path(r["abs_path"])
-                parent_dir = str(p.parent)
+                raw_path = r["abs_path"]
+                # Cross-platform normalization for both Windows (\) and POSIX (/) paths
+                norm_path = raw_path.replace("\\", "/")
+                parts = norm_path.rsplit("/", 1)
+                parent_dir = parts[0] if len(parts) > 1 else str(Path(raw_path).parent)
+                dir_name = parent_dir.rsplit("/", 1)[-1] if "/" in parent_dir else parent_dir
                 if parent_dir not in folder_map:
                     folder_map[parent_dir] = {
                         "path": parent_dir,
-                        "name": p.parent.name if p.parent.name else parent_dir,
+                        "name": dir_name if dir_name else parent_dir,
                         "source_id": r["source_id"],
                         "source_label": r["source_label"],
                         "file_count": 0
@@ -255,9 +259,10 @@ class TagManager:
             params.append(source_id)
 
         if folder:
-            f_clean = folder.replace("/", "\\")
-            where_clauses.append("(f.abs_path LIKE ? OR f.rel_path LIKE ?)")
-            params.extend([f"%{f_clean}%", f"%{f_clean}%"])
+            f_slash = folder.replace("\\", "/")
+            f_bslash = folder.replace("/", "\\")
+            where_clauses.append("(f.abs_path LIKE ? OR f.abs_path LIKE ? OR f.rel_path LIKE ? OR f.rel_path LIKE ?)")
+            params.extend([f"%{f_slash}%", f"%{f_bslash}%", f"%{f_slash}%", f"%{f_bslash}%"])
 
         if media_type == "video":
             where_clauses.append("f.media_type = 'video'")

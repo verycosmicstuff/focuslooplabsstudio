@@ -26,7 +26,7 @@ class TestFocusloop(unittest.TestCase):
 
         cls.test_dir = Path(__file__).resolve().parent / "mock_storage"
         if cls.test_dir.exists():
-            shutil.rmtree(cls.test_dir)
+            shutil.rmtree(cls.test_dir, ignore_errors=True)
         cls.test_dir.mkdir(parents=True, exist_ok=True)
 
         cls.orig_db_path = src.config.DB_PATH
@@ -43,7 +43,7 @@ class TestFocusloop(unittest.TestCase):
         src.config.DB_PATH = cls.orig_db_path
         close_db()
         if cls.test_dir.exists():
-            shutil.rmtree(cls.test_dir)
+            shutil.rmtree(cls.test_dir, ignore_errors=True)
 
     def test_1_sidecar_binding(self):
         """Test that Fuji RAW + XMP sidecars are bound together atomically."""
@@ -137,6 +137,52 @@ class TestFocusloop(unittest.TestCase):
         conv_size = out_video.stat().st_size
         print(f"[Test] Transcoded H.265 Video Size: {conv_size} bytes (Saved {orig_size - conv_size} bytes)")
         self.assertGreater(conv_size, 0)
+
+    def test_4b_transcode_pause_and_resume(self):
+        """Test pause and resume state handling and database synchronization."""
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR IGNORE INTO sources (id, path, label) VALUES (99, 'mock_src', 'Mock')")
+        cursor.execute("""
+            INSERT OR IGNORE INTO files (id, source_id, rel_path, abs_path, filename, ext, size_bytes, mtime, ctime, media_type, status)
+            VALUES (9999, 99, 'test.mp4', 'mock_src/test.mp4', 'test.mp4', '.mp4', 1000, 1000.0, 1000.0, 'video', 'active')
+        """)
+        cursor.execute("""
+            INSERT OR REPLACE INTO transcodes (id, source_file_id, output_path, status, profile, original_size, fps, speed)
+            VALUES (8888, 9999, 'mock_out.mp4', 'transcoding', 'nvenc_hq_10bit', 1000, 120.0, '3.5x')
+        """)
+        conn.commit()
+
+        from src.transcoder.engine import TranscodeJob, transcode_queue
+        job = TranscodeJob(8888, "mock_src/test.mp4", "mock_out.mp4")
+
+        # Pause job
+        job.pause()
+        self.assertTrue(job.is_paused)
+
+        cursor.execute("SELECT status, fps, speed FROM transcodes WHERE id = 8888")
+        row = cursor.fetchone()
+        self.assertEqual(row["status"], "paused")
+        self.assertEqual(row["fps"], 0.0)
+        self.assertEqual(row["speed"], "0x")
+
+        # Resume job
+        job.resume()
+        self.assertFalse(job.is_paused)
+        cursor.execute("SELECT status FROM transcodes WHERE id = 8888")
+        row = cursor.fetchone()
+        self.assertEqual(row["status"], "transcoding")
+
+        # Queue level pause and resume
+        transcode_queue.current_job = job
+        transcode_queue.pause()
+        self.assertTrue(transcode_queue.is_paused)
+        self.assertTrue(job.is_paused)
+
+        transcode_queue.resume()
+        self.assertFalse(transcode_queue.is_paused)
+        self.assertFalse(job.is_paused)
+        transcode_queue.current_job = None
 
     def test_5_duplicate_detector_folder_pairing(self):
         """Test that duplicate detector groups matches with folder pairing metadata."""

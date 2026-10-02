@@ -168,6 +168,36 @@ def init_db():
     );
 
     CREATE INDEX IF NOT EXISTS idx_media_notes_file ON media_notes(file_id);
+
+    CREATE TABLE IF NOT EXISTS people (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        avatar_face_id INTEGER,
+        is_hidden BOOLEAN DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_people_name ON people(name);
+    CREATE INDEX IF NOT EXISTS idx_people_hidden ON people(is_hidden);
+
+    CREATE TABLE IF NOT EXISTS face_detections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+        person_id INTEGER REFERENCES people(id) ON DELETE SET NULL,
+        timestamp_sec REAL DEFAULT 0.0,
+        box_x INTEGER NOT NULL,
+        box_y INTEGER NOT NULL,
+        box_w INTEGER NOT NULL,
+        box_h INTEGER NOT NULL,
+        confidence REAL NOT NULL,
+        embedding BLOB NOT NULL,
+        thumbnail_path TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_face_detections_file ON face_detections(file_id);
+    CREATE INDEX IF NOT EXISTS idx_face_detections_person ON face_detections(person_id);
     """)
 
     # Column migration: ensure excluded_paths, volume_uuid, and alternate_paths exist in sources

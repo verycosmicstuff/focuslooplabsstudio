@@ -49,33 +49,45 @@ class TestTaggingAndCatalog(unittest.TestCase):
         cursor.execute("DELETE FROM media_notes")
         conn.commit()
 
+        src1_path = str(self.test_dir / "SSD_Primary" / "Videos")
+        src2_path = str(self.test_dir / "Backup_HDD" / "Archive")
+
         cursor.execute("""
             INSERT INTO sources (id, path, label, drive_type)
-            VALUES (1, 'F:\\Videos\\Interviews', 'SSD Primary', 'SSD')
-        """)
+            VALUES (1, ?, 'SSD Primary', 'SSD')
+        """, (src1_path,))
         cursor.execute("""
             INSERT INTO sources (id, path, label, drive_type)
-            VALUES (2, 'E:\\Archive\\2026', 'Backup HDD', 'HDD')
-        """)
+            VALUES (2, ?, 'Backup HDD', 'HDD')
+        """, (src2_path,))
+
+        f101_rel = str(Path("ShootA") / "CEO_Keynote.mp4")
+        f101_abs = str(self.test_dir / "SSD_Primary" / "Videos" / "ShootA" / "CEO_Keynote.mp4")
+        f102_rel = str(Path("ShootA") / "Q3_Finance_Review.mp4")
+        f102_abs = str(self.test_dir / "SSD_Primary" / "Videos" / "ShootA" / "Q3_Finance_Review.mp4")
+        f103_rel = str(Path("Broll") / "Product_Broll.mov")
+        f103_abs = str(self.test_dir / "Backup_HDD" / "Archive" / "Broll" / "Product_Broll.mov")
+        f104_rel = str(Path("Stills") / "Speaker_Portrait.jpg")
+        f104_abs = str(self.test_dir / "SSD_Primary" / "Videos" / "Stills" / "Speaker_Portrait.jpg")
 
         # Insert 3 sample video files in different folders
         cursor.execute("""
             INSERT INTO files (id, source_id, rel_path, abs_path, filename, ext, size_bytes, mtime, ctime, media_type, status)
-            VALUES (101, 1, 'ShootA\\CEO_Keynote.mp4', 'F:\\Videos\\Interviews\\ShootA\\CEO_Keynote.mp4', 'CEO_Keynote.mp4', '.mp4', 500000000, 1000.0, 1000.0, 'video', 'active')
-        """)
+            VALUES (101, 1, ?, ?, 'CEO_Keynote.mp4', '.mp4', 500000000, 1000.0, 1000.0, 'video', 'active')
+        """, (f101_rel, f101_abs))
         cursor.execute("""
             INSERT INTO files (id, source_id, rel_path, abs_path, filename, ext, size_bytes, mtime, ctime, media_type, status)
-            VALUES (102, 1, 'ShootA\\Q3_Finance_Review.mp4', 'F:\\Videos\\Interviews\\ShootA\\Q3_Finance_Review.mp4', 'Q3_Finance_Review.mp4', '.mp4', 250000000, 2000.0, 2000.0, 'video', 'active')
-        """)
+            VALUES (102, 1, ?, ?, 'Q3_Finance_Review.mp4', '.mp4', 250000000, 2000.0, 2000.0, 'video', 'active')
+        """, (f102_rel, f102_abs))
         cursor.execute("""
             INSERT INTO files (id, source_id, rel_path, abs_path, filename, ext, size_bytes, mtime, ctime, media_type, status)
-            VALUES (103, 2, 'Broll\\Product_Broll.mov', 'E:\\Archive\\2026\\Broll\\Product_Broll.mov', 'Product_Broll.mov', '.mov', 800000000, 3000.0, 3000.0, 'video', 'active')
-        """)
+            VALUES (103, 2, ?, ?, 'Product_Broll.mov', '.mov', 800000000, 3000.0, 3000.0, 'video', 'active')
+        """, (f103_rel, f103_abs))
         # Insert 1 photo
         cursor.execute("""
             INSERT INTO files (id, source_id, rel_path, abs_path, filename, ext, size_bytes, mtime, ctime, media_type, status)
-            VALUES (104, 1, 'Stills\\Speaker_Portrait.jpg', 'F:\\Videos\\Interviews\\Stills\\Speaker_Portrait.jpg', 'Speaker_Portrait.jpg', '.jpg', 15000000, 4000.0, 4000.0, 'photo', 'active')
-        """)
+            VALUES (104, 1, ?, ?, 'Speaker_Portrait.jpg', '.jpg', 15000000, 4000.0, 4000.0, 'photo', 'active')
+        """, (f104_rel, f104_abs))
 
         # Add media_meta for duration
         cursor.execute("""

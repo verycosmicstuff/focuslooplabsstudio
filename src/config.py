@@ -67,6 +67,12 @@ THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
 QUARANTINE_DIR = DATA_DIR / "quarantine"
 QUARANTINE_DIR.mkdir(parents=True, exist_ok=True)
 
+FACES_DIR = DATA_DIR / "faces"
+FACES_DIR.mkdir(parents=True, exist_ok=True)
+
+MODELS_DIR = DATA_DIR / "models"
+MODELS_DIR.mkdir(parents=True, exist_ok=True)
+
 # Media format groups
 RAW_EXTS = {".raf", ".dng", ".cr2", ".cr3", ".arw", ".nef", ".rw2", ".orf"}
 PHOTO_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".tiff", ".tif", ".heic"}

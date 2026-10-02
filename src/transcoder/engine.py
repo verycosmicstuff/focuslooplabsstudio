@@ -11,6 +11,7 @@ import psutil
 import sys
 from src.config import FFMPEG_PATH, FFPROBE_PATH, PERFORMANCE_MODES
 from src.core.db import get_db, db_transaction
+from src.core.logger import logger
 
 # Windows Process Creation Flags
 BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
@@ -90,30 +91,60 @@ class TranscodeJob:
         self.total_duration_sec = 0.0
 
     def pause(self):
+        self.is_paused = True
         if self.process and self.process.poll() is None:
             try:
                 p = psutil.Process(self.process.pid)
+                for child in p.children(recursive=True):
+                    try:
+                        child.suspend()
+                    except Exception:
+                        pass
                 p.suspend()
-                self.is_paused = True
-            except Exception:
-                pass
+                logger.info(f"Transcode job {self.transcode_id} (PID {self.process.pid}) suspended successfully.")
+            except Exception as e:
+                logger.error(f"Error suspending transcode process {self.process.pid}: {e}")
+        self._update_db_paused()
 
     def resume(self):
+        self.is_paused = False
         if self.process and self.process.poll() is None:
             try:
                 p = psutil.Process(self.process.pid)
                 p.resume()
-                self.is_paused = False
-            except Exception:
-                pass
+                for child in p.children(recursive=True):
+                    try:
+                        child.resume()
+                    except Exception:
+                        pass
+                logger.info(f"Transcode job {self.transcode_id} (PID {self.process.pid}) resumed successfully.")
+            except Exception as e:
+                logger.error(f"Error resuming transcode process {self.process.pid}: {e}")
+        self._update_db_resumed()
 
     def cancel(self):
         self.is_cancelled = True
         if self.process and self.process.poll() is None:
             try:
-                self.process.terminate()
+                p = psutil.Process(self.process.pid)
+                try:
+                    p.resume()
+                except Exception:
+                    pass
+                for child in p.children(recursive=True):
+                    try:
+                        child.kill()
+                    except Exception:
+                        pass
+                p.kill()
             except Exception:
-                pass
+                try:
+                    self.process.kill()
+                except Exception:
+                    try:
+                        self.process.terminate()
+                    except Exception:
+                        pass
 
     def run(self) -> bool:
         if not FFMPEG_PATH or not os.path.isfile(FFMPEG_PATH):
@@ -215,6 +246,9 @@ class TranscodeJob:
                 if self.is_cancelled:
                     break
 
+                while self.is_paused and not self.is_cancelled:
+                    time.sleep(0.2)
+
                 line = line.strip()
                 if not line:
                     continue
@@ -226,7 +260,7 @@ class TranscodeJob:
                         try:
                             cur_us = int(val)
                             cur_sec = cur_us / 1_000_000.0
-                            if self.total_duration_sec > 0:
+                            if self.total_duration_sec > 0 and not self.is_paused:
                                 progress = min(99.9, round((cur_sec / self.total_duration_sec) * 100, 1))
                                 now = time.time()
                                 if now - last_update_time >= 0.4:
@@ -235,17 +269,19 @@ class TranscodeJob:
                         except Exception:
                             pass
                     elif key == "speed":
-                        now = time.time()
-                        if now - last_update_time >= 0.4:
-                            self._update_speed(val)
-                    elif key == "fps":
-                        try:
-                            fps_val = float(val)
+                        if not self.is_paused:
                             now = time.time()
                             if now - last_update_time >= 0.4:
-                                self._update_fps(fps_val)
-                        except Exception:
-                            pass
+                                self._update_speed(val)
+                    elif key == "fps":
+                        if not self.is_paused:
+                            try:
+                                fps_val = float(val)
+                                now = time.time()
+                                if now - last_update_time >= 0.4:
+                                    self._update_fps(fps_val)
+                            except Exception:
+                                pass
 
             self.process.wait()
             stderr_thread.join(timeout=1.0)
@@ -369,6 +405,14 @@ class TranscodeJob:
         with db_transaction() as tx:
             tx.execute("UPDATE transcodes SET status = ?, started_at = datetime('now') WHERE id = ?", (status, self.transcode_id))
 
+    def _update_db_paused(self):
+        with db_transaction() as tx:
+            tx.execute("UPDATE transcodes SET status = 'paused', fps = 0.0, speed = '0x' WHERE id = ?", (self.transcode_id,))
+
+    def _update_db_resumed(self):
+        with db_transaction() as tx:
+            tx.execute("UPDATE transcodes SET status = 'transcoding' WHERE id = ?", (self.transcode_id,))
+
     def _update_db_complete(self, orig_size: int, conv_size: int, saved_bytes: int):
         with db_transaction() as tx:
             tx.execute("""
@@ -395,6 +439,7 @@ class TranscodeQueue:
         self.current_job: Optional[TranscodeJob] = None
         self.lock = threading.Lock()
         self.is_running = False
+        self.is_paused = False
         self.perf_mode = "balanced"
 
     def set_performance_mode(self, mode: str):
@@ -426,19 +471,34 @@ class TranscodeQueue:
         self.start_worker_if_needed()
         return job_id
 
-    def pause_current(self):
+    def pause(self):
         with self.lock:
+            self.is_paused = True
             if self.current_job:
                 self.current_job.pause()
 
-    def resume_current(self):
+    def pause_current(self):
+        self.pause()
+
+    def resume(self):
         with self.lock:
+            self.is_paused = False
             if self.current_job:
                 self.current_job.resume()
+        self.start_worker_if_needed()
+
+    def resume_current(self):
+        self.resume()
 
     def cancel_job(self, transcode_id: int):
         with self.lock:
             if self.current_job and self.current_job.transcode_id == transcode_id:
+                if self.current_job.is_paused and self.current_job.process:
+                    try:
+                        p = psutil.Process(self.current_job.process.pid)
+                        p.resume()
+                    except Exception:
+                        pass
                 self.current_job.cancel()
             else:
                 with db_transaction() as tx:
@@ -446,19 +506,29 @@ class TranscodeQueue:
 
     def start_worker_if_needed(self):
         with self.lock:
+            self.is_paused = False
+            if self.current_job and self.current_job.is_paused:
+                self.current_job.resume()
             if not self.is_running:
                 self.is_running = True
                 threading.Thread(target=self._worker_loop, daemon=True).start()
 
     def _worker_loop(self):
         while True:
+            # Check pause state before fetching or starting any job
+            while True:
+                with self.lock:
+                    if not self.is_paused:
+                        break
+                time.sleep(0.5)
+
             conn = get_db()
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT t.id, t.source_file_id, t.output_path, t.profile, f.abs_path
                 FROM transcodes t
                 JOIN files f ON t.source_file_id = f.id
-                WHERE t.status = 'pending'
+                WHERE t.status IN ('pending', 'paused')
                 ORDER BY t.id ASC LIMIT 1
             """)
             row = cursor.fetchone()
@@ -467,6 +537,11 @@ class TranscodeQueue:
                     self.is_running = False
                     self.current_job = None
                 break
+
+            with self.lock:
+                if self.is_paused:
+                    time.sleep(0.5)
+                    continue
 
             job = TranscodeJob(
                 transcode_id=row["id"],
@@ -477,6 +552,8 @@ class TranscodeQueue:
             )
             with self.lock:
                 self.current_job = job
+                if self.is_paused:
+                    job.is_paused = True
 
             job.run()
             time.sleep(0.5)
