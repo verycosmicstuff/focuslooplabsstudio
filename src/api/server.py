@@ -1972,6 +1972,7 @@ async def api_upload_and_find_face(
 def api_get_faces_by_file(
     query: str = Query(..., description="Filename or partial path to inspect"),
     source_id: Optional[int] = Query(None),
+    folder: Optional[str] = Query(None),
     media_type: str = Query("all"),
     limit: int = Query(10, ge=1, le=50)
 ):
@@ -1980,6 +1981,7 @@ def api_get_faces_by_file(
             query=query,
             limit=limit,
             source_id=source_id,
+            folder_filter=folder,
             media_type=media_type
         )
     except Exception as e:
@@ -1987,9 +1989,13 @@ def api_get_faces_by_file(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/faces/people/{person_id}")
-def api_get_person(person_id: int):
+def api_get_person(
+    person_id: int,
+    source_id: Optional[int] = Query(None),
+    folder: Optional[str] = Query(None)
+):
     try:
-        return face_engine.get_person_details(person_id)
+        return face_engine.get_person_details(person_id, source_id=source_id, folder_filter=folder)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 

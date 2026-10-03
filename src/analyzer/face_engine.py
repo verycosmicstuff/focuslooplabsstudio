@@ -198,6 +198,19 @@ class FaceEngine:
             "start_time": None
         }
 
+    @staticmethod
+    def _build_folder_sql(folder_filter: str, table_alias: str = "f") -> Tuple[str, List[str]]:
+        norm = folder_filter.replace("\\", "/").strip("/")
+        cond = f"""(
+            REPLACE({table_alias}.abs_path, char(92), '/') LIKE ? 
+            OR REPLACE({table_alias}.abs_path, char(92), '/') = ?
+            OR REPLACE({table_alias}.rel_path, char(92), '/') LIKE ? 
+            OR REPLACE({table_alias}.rel_path, char(92), '/') = ?
+            OR REPLACE({table_alias}.abs_path, char(92), '/') LIKE ?
+        )"""
+        params = [f"{norm}/%", norm, f"{norm}/%", norm, f"%/{norm}/%"]
+        return cond, params
+
     # -------------------------------------------------------------
     # Low-level Detection & Embedding Extraction
     # -------------------------------------------------------------
@@ -836,6 +849,8 @@ class FaceEngine:
         conn = get_db()
         cursor = conn.cursor()
 
+        is_scoped = bool((source_id is not None and source_id > 0) or folder_filter)
+
         # Build scope filter for files
         scope_conditions = ["p.is_hidden = 0"]
         scope_params: List[Any] = []
@@ -845,12 +860,12 @@ class FaceEngine:
             scope_params.append(source_id)
 
         if folder_filter:
-            norm_folder = folder_filter.replace("\\", "/").strip("/")
-            scope_conditions.append("(f.rel_path LIKE ? OR f.rel_path LIKE ?)")
-            scope_params.append(f"{norm_folder}/%")
-            scope_params.append(f"{norm_folder}")
+            f_cond, f_params = self._build_folder_sql(folder_filter, "f")
+            scope_conditions.append(f_cond)
+            scope_params.extend(f_params)
 
         where_clause = " AND ".join(scope_conditions)
+        join_type = "JOIN" if is_scoped else "LEFT JOIN"
 
         query = f"""
             SELECT
@@ -863,10 +878,12 @@ class FaceEngine:
                 COUNT(DISTINCT fd.file_id) as file_count,
                 COUNT(DISTINCT CASE WHEN f.media_type = 'video' THEN fd.file_id END) as video_count,
                 COUNT(DISTINCT CASE WHEN f.media_type != 'video' THEN fd.file_id END) as photo_count,
-                af.thumbnail_path as avatar_thumbnail
+                MIN(CASE WHEN fd.thumbnail_path IS NOT NULL THEN fd.id END) as scoped_avatar_face_id,
+                MIN(CASE WHEN fd.thumbnail_path IS NOT NULL THEN fd.thumbnail_path END) as scoped_thumbnail,
+                af.thumbnail_path as global_avatar_thumbnail
             FROM people p
-            LEFT JOIN face_detections fd ON fd.person_id = p.id
-            LEFT JOIN files f ON f.id = fd.file_id
+            {join_type} face_detections fd ON fd.person_id = p.id
+            {join_type} files f ON f.id = fd.file_id
             LEFT JOIN face_detections af ON af.id = p.avatar_face_id
             WHERE {where_clause}
             GROUP BY p.id
@@ -891,14 +908,21 @@ class FaceEngine:
             if media_type == "photo" and (r["photo_count"] or 0) == 0:
                 continue
 
-            avatar_thumb = r["avatar_thumbnail"]
-            avatar_url = f"/api/faces/thumbnail/{r['avatar_face_id']}" if avatar_thumb else None
+            # Prefer scoped avatar from current folder/drive if available
+            if is_scoped and r["scoped_thumbnail"]:
+                avatar_thumb = r["scoped_thumbnail"]
+                avatar_face_id = r["scoped_avatar_face_id"] or r["avatar_face_id"]
+            else:
+                avatar_thumb = r["global_avatar_thumbnail"]
+                avatar_face_id = r["avatar_face_id"]
+
+            avatar_url = f"/api/faces/thumbnail/{avatar_face_id}" if avatar_thumb else None
 
             results.append({
                 "id": r["id"],
                 "name": name,
                 "is_named": is_named,
-                "avatar_face_id": r["avatar_face_id"],
+                "avatar_face_id": avatar_face_id,
                 "avatar_url": avatar_url,
                 "face_count": r["face_count"],
                 "file_count": r["file_count"],
@@ -922,8 +946,13 @@ class FaceEngine:
 
         return results
 
-    def get_person_details(self, person_id: int) -> Dict[str, Any]:
-        """Get full details of a person and list of all media files containing them."""
+    def get_person_details(
+        self,
+        person_id: int,
+        source_id: Optional[int] = None,
+        folder_filter: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Get full details of a person and list of all media files containing them, optionally scoped."""
         conn = get_db()
         cursor = conn.cursor()
 
@@ -937,7 +966,27 @@ class FaceEngine:
         if not p_row:
             raise ValueError(f"Person {person_id} not found")
 
-        cursor.execute("""
+        cursor.execute("SELECT COUNT(id), COUNT(DISTINCT file_id) FROM face_detections WHERE person_id = ?", (person_id,))
+        totals = cursor.fetchone()
+        total_faces_all = totals[0] if totals else 0
+        total_media_all = totals[1] if totals else 0
+
+        is_scoped = bool((source_id is not None and source_id > 0) or folder_filter)
+        det_conditions = ["fd.person_id = ?", "f.status = 'active'"]
+        det_params: List[Any] = [person_id]
+
+        if source_id is not None and source_id > 0:
+            det_conditions.append("f.source_id = ?")
+            det_params.append(source_id)
+
+        if folder_filter:
+            f_cond, f_params = self._build_folder_sql(folder_filter, "f")
+            det_conditions.append(f_cond)
+            det_params.extend(f_params)
+
+        det_where = " AND ".join(det_conditions)
+
+        cursor.execute(f"""
             SELECT
                 fd.id as face_id,
                 fd.file_id,
@@ -956,14 +1005,17 @@ class FaceEngine:
             FROM face_detections fd
             JOIN files f ON f.id = fd.file_id
             LEFT JOIN sources s ON s.id = f.source_id
-            WHERE fd.person_id = ?
+            WHERE {det_where}
             ORDER BY f.mtime DESC, fd.timestamp_sec ASC
-        """, (person_id,))
+        """, det_params)
         detections = cursor.fetchall()
 
         # Group detections by file_id
         media_map: Dict[int, Dict[str, Any]] = {}
+        scoped_avatar_face_id = None
         for d in detections:
+            if scoped_avatar_face_id is None and d["face_thumbnail"]:
+                scoped_avatar_face_id = d["face_id"]
             fid = d["file_id"]
             if fid not in media_map:
                 media_map[fid] = {
@@ -985,17 +1037,21 @@ class FaceEngine:
                 "thumbnail_url": f"/api/faces/thumbnail/{d['face_id']}" if d["face_thumbnail"] else None
             })
 
-        avatar_url = f"/api/faces/thumbnail/{p_row['avatar_face_id']}" if p_row["avatar_thumbnail"] else None
+        display_avatar_id = (scoped_avatar_face_id if is_scoped and scoped_avatar_face_id else p_row["avatar_face_id"])
+        avatar_url = f"/api/faces/thumbnail/{display_avatar_id}" if display_avatar_id else None
 
         return {
             "id": p_row["id"],
             "name": p_row["name"],
             "is_named": not p_row["name"].startswith("Unnamed Person"),
-            "avatar_face_id": p_row["avatar_face_id"],
+            "avatar_face_id": display_avatar_id,
             "avatar_url": avatar_url,
             "created_at": p_row["created_at"],
             "total_faces": len(detections),
             "total_media": len(media_map),
+            "total_faces_all": total_faces_all,
+            "total_media_all": total_media_all,
+            "is_scoped": is_scoped,
             "media": list(media_map.values())
         }
 
@@ -1004,6 +1060,7 @@ class FaceEngine:
         query: str,
         limit: int = 10,
         source_id: Optional[int] = None,
+        folder_filter: Optional[str] = None,
         media_type: str = "all"
     ) -> Dict[str, Any]:
         """
@@ -1021,14 +1078,20 @@ class FaceEngine:
         search_pattern = f"%{cleaned_query}%"
 
         file_conditions = [
-            "(f.filename LIKE ? OR f.rel_path LIKE ?)",
-            "EXISTS (SELECT 1 FROM face_detections fd WHERE fd.file_id = f.id)"
+            "(f.filename LIKE ? OR REPLACE(f.rel_path, char(92), '/') LIKE ?)",
+            "EXISTS (SELECT 1 FROM face_detections fd WHERE fd.file_id = f.id)",
+            "f.status = 'active'"
         ]
         file_params: List[Any] = [search_pattern, search_pattern]
 
         if source_id is not None and source_id > 0:
             file_conditions.append("f.source_id = ?")
             file_params.append(source_id)
+
+        if folder_filter:
+            f_cond, f_params = self._build_folder_sql(folder_filter, "f")
+            file_conditions.append(f_cond)
+            file_params.extend(f_params)
 
         if media_type == "video":
             file_conditions.append("f.media_type = 'video'")
@@ -1099,7 +1162,7 @@ class FaceEngine:
             people_groups = []
             for p_id in distinct_person_ids:
                 try:
-                    p_details = self.get_person_details(p_id)
+                    p_details = self.get_person_details(p_id, source_id=source_id, folder_filter=folder_filter)
                     p_media = p_details.get("media", [])
                     photo_cnt = sum(1 for m in p_media if m.get("media_type") != "video")
                     video_cnt = sum(1 for m in p_media if m.get("media_type") == "video")
@@ -1109,8 +1172,10 @@ class FaceEngine:
                         "avatar_url": p_details.get("avatar_url"),
                         "is_named": p_details["is_named"],
                         "total_appearances": p_details["total_faces"],
+                        "total_appearances_all": p_details.get("total_faces_all", p_details["total_faces"]),
                         "photo_count": photo_cnt,
                         "video_count": video_cnt,
+                        "is_scoped": p_details.get("is_scoped", False),
                         "media": p_media
                     })
                 except Exception as e:
@@ -1485,10 +1550,9 @@ class FaceEngine:
 
             # Scope by folder
             if folder_filter:
-                norm_folder = folder_filter.replace("\\", "/").strip("/")
-                conditions.append("(f.rel_path LIKE ? OR f.rel_path LIKE ?)")
-                params.append(f"{norm_folder}/%")
-                params.append(f"{norm_folder}")
+                f_cond, f_params = self._build_folder_sql(folder_filter, "f")
+                conditions.append(f_cond)
+                params.extend(f_params)
 
             # Force rescan vs skipping already-scanned files
             if not force_rescan:
@@ -1577,8 +1641,24 @@ class FaceEngine:
             if norm > 0:
                 target_vec = target_vec / norm
 
-            # 2. Instant fast sweep of already extracted unassigned faces
-            cursor.execute("SELECT id, file_id, embedding FROM face_detections WHERE person_id IS NULL AND embedding IS NOT NULL")
+            # 2. Instant fast sweep of already extracted unassigned faces within the requested scope
+            unassigned_conditions = ["fd.person_id IS NULL", "fd.embedding IS NOT NULL", "f.status = 'active'"]
+            unassigned_params: List[Any] = []
+            if source_id is not None and source_id > 0:
+                unassigned_conditions.append("f.source_id = ?")
+                unassigned_params.append(source_id)
+            if folder_filter:
+                f_cond, f_params = self._build_folder_sql(folder_filter, "f")
+                unassigned_conditions.append(f_cond)
+                unassigned_params.extend(f_params)
+
+            unassigned_where = " AND ".join(unassigned_conditions)
+            cursor.execute(f"""
+                SELECT fd.id, fd.file_id, fd.embedding 
+                FROM face_detections fd
+                JOIN files f ON fd.file_id = f.id
+                WHERE {unassigned_where}
+            """, unassigned_params)
             unassigned_rows = cursor.fetchall()
             for u in unassigned_rows:
                 u_vec = np.frombuffer(u["embedding"], dtype=np.float32)
@@ -1594,7 +1674,23 @@ class FaceEngine:
                                     (u["file_id"], person_name)
                                 )
 
-            cursor.execute("SELECT COUNT(*) FROM face_detections WHERE person_id = ?", (person_id,))
+            # Count matches in scope
+            match_conds = ["fd.person_id = ?", "f.status = 'active'"]
+            match_params: List[Any] = [person_id]
+            if source_id is not None and source_id > 0:
+                match_conds.append("f.source_id = ?")
+                match_params.append(source_id)
+            if folder_filter:
+                f_cond, f_params = self._build_folder_sql(folder_filter, "f")
+                match_conds.append(f_cond)
+                match_params.extend(f_params)
+
+            cursor.execute(f"""
+                SELECT COUNT(fd.id) 
+                FROM face_detections fd
+                JOIN files f ON fd.file_id = f.id
+                WHERE {" AND ".join(match_conds)}
+            """, match_params)
             self.scan_state["matches_found"] = cursor.fetchone()[0]
 
             # 3. Find files to scan according to selected scope (drive, folder, media_type)
@@ -1613,10 +1709,9 @@ class FaceEngine:
                 params.append(source_id)
 
             if folder_filter:
-                norm_folder = folder_filter.replace("\\", "/").strip("/")
-                conditions.append("(f.rel_path LIKE ? OR f.rel_path LIKE ?)")
-                params.append(f"{norm_folder}/%")
-                params.append(f"{norm_folder}")
+                f_cond, f_params = self._build_folder_sql(folder_filter, "f")
+                conditions.append(f_cond)
+                params.extend(f_params)
 
             if force_rescan:
                 conditions.append("f.id NOT IN (SELECT DISTINCT file_id FROM face_detections WHERE person_id = ?)")

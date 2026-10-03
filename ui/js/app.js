@@ -6196,6 +6196,45 @@ let faceScanPollingInterval = null;
 let lastFacesFoundCount = -1;
 let lastFaceScanPollTime = 0;
 
+async function loadFacesFolderDropdown(targetSelectId = 'sel-faces-folder', selectedValue = null, sourceIdOverride = null) {
+  const sel = document.getElementById(targetSelectId);
+  if (!sel) return;
+
+  const currentVal = selectedValue !== null ? selectedValue : sel.value;
+  let sourceId = sourceIdOverride;
+  if (sourceId === null) {
+    if (targetSelectId === 'modal-scan-folder') {
+      sourceId = document.getElementById('modal-scan-source')?.value || '';
+    } else {
+      sourceId = document.getElementById('sel-faces-source')?.value || '';
+    }
+  }
+
+  try {
+    const res = await fetch(API_BASE + '/api/tags/folders' + (sourceId ? `?source_id=${sourceId}` : ''));
+    if (!res.ok) return;
+    const data = await res.json();
+    const folders = data.folders || [];
+
+    const defaultLabel = targetSelectId === 'modal-scan-folder' ? '📁 Entire Selected Drive / Scope' : '📁 All Folders & Subfolders';
+    sel.innerHTML = `<option value="">${defaultLabel}</option>`;
+
+    folders.forEach(f => {
+      const opt = document.createElement('option');
+      opt.value = f.path;
+      opt.textContent = `📁 ${f.name} (${f.file_count})`;
+      opt.title = f.path;
+      sel.appendChild(opt);
+    });
+
+    if (currentVal && Array.from(sel.options).some(o => o.value === currentVal)) {
+      sel.value = currentVal;
+    }
+  } catch (err) {
+    console.warn('Failed to load faces folder dropdown:', err);
+  }
+}
+
 async function loadFacesCatalog(isSilent = false) {
   const sourceSel = document.getElementById('sel-faces-source');
   const folderSel = document.getElementById('sel-faces-folder');
@@ -6214,6 +6253,12 @@ async function loadFacesCatalog(isSilent = false) {
   }
 
   const sourceId = sourceSel ? sourceSel.value : '';
+
+  // Populate folder dropdown if needed
+  if (folderSel && folderSel.options.length <= 1) {
+    await loadFacesFolderDropdown('sel-faces-folder', folderSel.value, sourceId);
+  }
+
   const folder = folderSel ? folderSel.value : '';
   const filterType = filterSel ? filterSel.value : 'all';
   const sortBy = sortSel ? sortSel.value : 'count';
@@ -6253,6 +6298,14 @@ function renderPeopleGrid(people) {
   }
   if (emptyPlaceholder) emptyPlaceholder.style.display = 'none';
 
+  const activeSourceId = document.getElementById('sel-faces-source')?.value || '';
+  const activeFolder = document.getElementById('sel-faces-folder')?.value || '';
+  const isScoped = Boolean(activeSourceId || activeFolder);
+  const targetBtnLabel = isScoped ? '🎯 Hunt in This Scope' : '🎯 Find in All Folders';
+  const targetBtnTitle = isScoped 
+    ? 'Search active scope for appearances of this face' 
+    : 'Search all drives and folders immediately for this face';
+
   people.forEach(person => {
     const card = document.createElement('div');
     card.className = 'person-card' + (selectedPeopleIds.has(person.id) ? ' selected' : '');
@@ -6281,8 +6334,8 @@ function renderPeopleGrid(people) {
       <div class="person-card-name ${isNamed ? '' : 'unnamed'}" title="${escapeHtml(person.name)}">${escapeHtml(person.name)}</div>
       <div class="person-card-meta">${mediaBadgeStr}</div>
       <div class="person-card-badge ${isNamed ? 'named' : ''}">${isNamed ? 'Named Person' : 'Unnamed Cluster'}</div>
-      <button class="btn-target-find" title="Search all drives and folders immediately for this face" data-person-id="${person.id}">
-        🎯 Find in All Folders
+      <button class="btn-target-find" title="${targetBtnTitle}" data-person-id="${person.id}">
+        ${targetBtnLabel}
       </button>
     `;
 
@@ -6305,7 +6358,10 @@ function renderPeopleGrid(people) {
     if (btnTarget) {
       btnTarget.addEventListener('click', (e) => {
         e.stopPropagation();
-        startTargetScan(person.id, person.name);
+        startTargetScan(person.id, person.name, {
+          source_id: activeSourceId ? parseInt(activeSourceId, 10) : null,
+          folder_filter: activeFolder || null
+        });
       });
     }
 
@@ -6346,6 +6402,7 @@ async function searchFacesByFilename(query) {
   if (clearBtn) clearBtn.style.display = 'block';
 
   const sourceId = document.getElementById('sel-faces-source')?.value || '';
+  const folder = document.getElementById('sel-faces-folder')?.value || '';
   const mediaType = document.getElementById('sel-faces-media-type')?.value || 'all';
 
   if (container) {
@@ -6360,6 +6417,7 @@ async function searchFacesByFilename(query) {
   try {
     let url = `${API_BASE}/api/faces/by-file?query=${encodeURIComponent(query)}&media_type=${encodeURIComponent(mediaType)}`;
     if (sourceId) url += `&source_id=${encodeURIComponent(sourceId)}`;
+    if (folder) url += `&folder=${encodeURIComponent(folder)}`;
 
     const res = await fetch(url);
     if (!res.ok) throw new Error('Search failed');
@@ -6573,8 +6631,8 @@ function renderFileFacesResult(data) {
                 <button class="btn btn-secondary btn-sm" style="font-size: 11px; padding: 4px 10px;" onclick="openPersonDetail(${person.person_id})">
                   👤 View Profile
                 </button>
-                <button class="btn btn-secondary btn-sm" style="font-size: 11px; padding: 4px 10px; color: var(--accent-cyan); border-color: rgba(6,182,212,0.3);" onclick="startTargetScan(${person.person_id}, '${escapeHtml(pName).replace(/'/g, "\\'")}')">
-                  🎯 Hunt Everywhere
+                <button class="btn btn-secondary btn-sm" style="font-size: 11px; padding: 4px 10px; color: var(--accent-cyan); border-color: rgba(6,182,212,0.3);" onclick="startTargetScan(${person.person_id}, '${escapeHtml(pName).replace(/'/g, "\\'")}', { source_id: document.getElementById('sel-faces-source')?.value ? parseInt(document.getElementById('sel-faces-source').value, 10) : null, folder_filter: document.getElementById('sel-faces-folder')?.value || null })">
+                  ${(document.getElementById('sel-faces-source')?.value || document.getElementById('sel-faces-folder')?.value) ? '🎯 Hunt in Scope' : '🎯 Hunt Everywhere'}
                 </button>
               </div>
             </div>
@@ -6707,8 +6765,17 @@ async function openPersonDetail(personId) {
   const modal = document.getElementById('modal-person-detail');
   if (!modal) return;
 
+  const sourceId = document.getElementById('sel-faces-source')?.value || '';
+  const folder = document.getElementById('sel-faces-folder')?.value || '';
+
   try {
-    const res = await fetch(`${API_BASE}/api/faces/people/${personId}`);
+    let url = `${API_BASE}/api/faces/people/${personId}`;
+    const params = [];
+    if (sourceId) params.push(`source_id=${encodeURIComponent(sourceId)}`);
+    if (folder) params.push(`folder=${encodeURIComponent(folder)}`);
+    if (params.length > 0) url += `?${params.join('&')}`;
+
+    const res = await fetch(url);
     if (!res.ok) throw new Error('Person not found');
     const person = await res.json();
 
@@ -6731,7 +6798,18 @@ async function openPersonDetail(personId) {
 
     const statsElem = document.getElementById('person-detail-stats');
     if (statsElem) {
-      statsElem.textContent = `${person.total_faces} appearances across ${person.total_media} media items`;
+      if (person.total_faces_all !== undefined && (person.total_faces !== person.total_faces_all)) {
+        statsElem.textContent = `${person.total_faces} appearances in current scope (${person.total_faces_all} total across all drives)`;
+      } else {
+        statsElem.textContent = `${person.total_faces} appearances across ${person.total_media} media items`;
+      }
+    }
+
+    const btnFindEverywhere = document.getElementById('btn-person-find-everywhere');
+    if (btnFindEverywhere) {
+      const isScoped = Boolean(sourceId || folder);
+      btnFindEverywhere.textContent = isScoped ? '🎯 Hunt in Current Scope' : '🎯 Find in All Folders';
+      btnFindEverywhere.title = isScoped ? 'Search active scope for appearances of this face' : 'Search all drives and folders immediately for this face';
     }
 
     // Populate merge target selector with all other people
@@ -6996,14 +7074,26 @@ async function startTargetScan(personId, personName, options = {}) {
 
 async function refreshActivePersonDetailMedia(personId) {
   if (!personId) return;
+  const sourceId = document.getElementById('sel-faces-source')?.value || '';
+  const folder = document.getElementById('sel-faces-folder')?.value || '';
   try {
-    const res = await fetch(`${API_BASE}/api/faces/people/${personId}`);
+    let url = `${API_BASE}/api/faces/people/${personId}`;
+    const params = [];
+    if (sourceId) params.push(`source_id=${encodeURIComponent(sourceId)}`);
+    if (folder) params.push(`folder=${encodeURIComponent(folder)}`);
+    if (params.length > 0) url += `?${params.join('&')}`;
+
+    const res = await fetch(url);
     if (!res.ok) return;
     const person = await res.json();
 
     const statsElem = document.getElementById('person-detail-stats');
     if (statsElem) {
-      statsElem.textContent = `${person.total_faces} appearances across ${person.total_media} media items`;
+      if (person.total_faces_all !== undefined && (person.total_faces !== person.total_faces_all)) {
+        statsElem.textContent = `${person.total_faces} appearances in current scope (${person.total_faces_all} total across all drives)`;
+      } else {
+        statsElem.textContent = `${person.total_faces} appearances across ${person.total_media} media items`;
+      }
     }
 
     const gallery = document.getElementById('person-media-gallery');
@@ -7217,8 +7307,23 @@ async function checkFaceScanStatus() {
 // Setup Event Listeners for People & Faces
 function setupFacesEventListeners() {
   // Scope / filter selectors change
-  const selectors = ['sel-faces-source', 'sel-faces-folder', 'sel-faces-filter', 'sel-faces-media-type'];
-  selectors.forEach(id => {
+  const selSource = document.getElementById('sel-faces-source');
+  if (selSource) {
+    selSource.addEventListener('change', async () => {
+      const folderEl = document.getElementById('sel-faces-folder');
+      if (folderEl) folderEl.value = '';
+      await loadFacesFolderDropdown('sel-faces-folder', '', selSource.value);
+      const txt = document.getElementById('txt-faces-file-search');
+      if (txt && txt.value.trim()) {
+        searchFacesByFilename(txt.value.trim());
+      } else {
+        loadFacesCatalog();
+      }
+    });
+  }
+
+  const otherSelectors = ['sel-faces-folder', 'sel-faces-filter', 'sel-faces-media-type'];
+  otherSelectors.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', () => {
       const txt = document.getElementById('txt-faces-file-search');
@@ -7299,7 +7404,12 @@ function setupFacesEventListeners() {
     btnFindEverywhere.addEventListener('click', () => {
       if (activeDetailPersonId) {
         const personName = document.getElementById('txt-person-detail-name')?.value || `Person ${activeDetailPersonId}`;
-        startTargetScan(activeDetailPersonId, personName);
+        const sourceId = document.getElementById('sel-faces-source')?.value || '';
+        const folder = document.getElementById('sel-faces-folder')?.value || '';
+        startTargetScan(activeDetailPersonId, personName, {
+          source_id: sourceId ? parseInt(sourceId, 10) : null,
+          folder_filter: folder || null
+        });
       }
     });
   }
@@ -7311,7 +7421,7 @@ function setupFacesEventListeners() {
   // Open scan config modal
   const btnOpenScan = document.getElementById('btn-open-face-scan');
   const btnEmptyScan = document.getElementById('btn-empty-start-face-scan');
-  const openScanModal = () => {
+  const openScanModal = async () => {
     const modal = document.getElementById('modal-face-scan');
     const sourceSel = document.getElementById('modal-scan-source');
     if (sourceSel && sourceSel.options.length <= 1 && Array.isArray(sourcesData)) {
@@ -7322,16 +7432,34 @@ function setupFacesEventListeners() {
         sourceSel.appendChild(opt);
       });
     }
+
+    // Sync modal selections with toolbar selections
+    const curSource = document.getElementById('sel-faces-source')?.value || '';
+    if (sourceSel) {
+      sourceSel.value = curSource;
+    }
+    const curFolder = document.getElementById('sel-faces-folder')?.value || '';
+    await loadFacesFolderDropdown('modal-scan-folder', curFolder, curSource);
+
     if (modal) modal.classList.add('active');
   };
   if (btnOpenScan) btnOpenScan.addEventListener('click', openScanModal);
   if (btnEmptyScan) btnEmptyScan.addEventListener('click', openScanModal);
+
+  // When source in modal changes, reload folder options in modal
+  const modalSourceSel = document.getElementById('modal-scan-source');
+  if (modalSourceSel) {
+    modalSourceSel.addEventListener('change', async () => {
+      await loadFacesFolderDropdown('modal-scan-folder', '', modalSourceSel.value);
+    });
+  }
 
   // Confirm start face scan
   const btnStartScan = document.getElementById('btn-modal-confirm-start-scan');
   if (btnStartScan) {
     btnStartScan.addEventListener('click', async () => {
       const sourceId = document.getElementById('modal-scan-source')?.value || null;
+      const folderVal = document.getElementById('modal-scan-folder')?.value || null;
       const mediaType = document.getElementById('modal-scan-media-type')?.value || 'all';
       const stepSec = parseFloat(document.getElementById('modal-scan-step-sec')?.value || '1.5');
       const forceRescan = document.getElementById('chk-modal-scan-force')?.checked || false;
@@ -7344,6 +7472,7 @@ function setupFacesEventListeners() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             source_id: sourceId ? parseInt(sourceId, 10) : null,
+            folder: folderVal || null,
             media_type: mediaType,
             step_sec: stepSec,
             force_rescan: forceRescan
