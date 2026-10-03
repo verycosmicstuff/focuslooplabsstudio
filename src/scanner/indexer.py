@@ -149,14 +149,23 @@ class SourceIndexer:
                     meta = item.get("meta")
 
                     # Check first by (source_id, rel_path) for mount path agility, then by abs_path
-                    tx_cur.execute("SELECT id, size_bytes, mtime, abs_path FROM files WHERE source_id = ? AND rel_path = ?", (self.source_id, rel_p))
+                    tx_cur.execute("SELECT id, source_id, size_bytes, mtime, abs_path FROM files WHERE source_id = ? AND rel_path = ?", (self.source_id, rel_p))
                     row = tx_cur.fetchone()
                     if not row:
-                        tx_cur.execute("SELECT id, size_bytes, mtime, abs_path FROM files WHERE abs_path = ?", (abs_str,))
+                        tx_cur.execute("SELECT id, source_id, size_bytes, mtime, abs_path FROM files WHERE abs_path = ?", (abs_str,))
                         row = tx_cur.fetchone()
 
                     if row:
                         file_id = row["id"]
+                        old_source_id = row["source_id"]
+
+                        # If previously indexed under a broader root / drive, transfer to this more specific subfolder source
+                        if old_source_id != self.source_id:
+                            tx_cur.execute("SELECT path FROM sources WHERE id = ?", (old_source_id,))
+                            old_s_row = tx_cur.fetchone()
+                            if old_s_row and len(str(self.root_path)) > len(old_s_row["path"]):
+                                tx_cur.execute("UPDATE files SET source_id = ?, rel_path = ? WHERE id = ?", (self.source_id, rel_p, file_id))
+
                         needs_update = (
                             row["size_bytes"] != size or
                             abs(row["mtime"] - mtime) > 1.0 or

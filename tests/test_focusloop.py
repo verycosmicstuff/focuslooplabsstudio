@@ -259,6 +259,88 @@ class TestFocusloop(unittest.TestCase):
         resolved = _resolve_binary("nonexistent_binary_xyz_123")
         self.assertEqual(resolved, "")
 
+    def test_transcode_individual_job_controls(self):
+        """Tests individual transcode queue job controls: pause, resume, restart, remove, and orphan recovery."""
+        from src.transcoder.engine import transcode_queue
+        from src.core.db import get_db, db_transaction
+        from src.analyzer.deduper import DuplicateDetector
+
+        conn = get_db()
+        cursor = conn.cursor()
+
+        # 1. Insert test file and transcode jobs
+        cursor.execute("SELECT id FROM sources LIMIT 1")
+        src_row = cursor.fetchone()
+        src_id = src_row["id"] if src_row else 1
+
+        with db_transaction() as tx:
+            tx.execute("""
+                INSERT OR REPLACE INTO files (id, source_id, rel_path, abs_path, filename, ext, size_bytes, mtime, ctime, media_type, fast_hash, full_hash, status)
+                VALUES (999901, ?, 'test/vid1.mp4', 'F:\\test\\vid1.mp4', 'vid1.mp4', '.mp4', 1000000, 0, 0, 'video', 'testhash1', NULL, 'active')
+            """, (src_id,))
+            tx.execute("""
+                INSERT OR REPLACE INTO files (id, source_id, rel_path, abs_path, filename, ext, size_bytes, mtime, ctime, media_type, fast_hash, full_hash, status)
+                VALUES (999902, ?, 'test/vid2.mp4', 'F:\\test\\vid2.mp4', 'vid2.mp4', '.mp4', 1000000, 0, 0, 'video', 'testhash1', NULL, 'active')
+            """, (src_id,))
+
+            # Create test transcode jobs
+            tx.execute("""
+                INSERT OR REPLACE INTO transcodes (id, source_file_id, output_path, status, profile, original_size, progress)
+                VALUES (9991, 999901, 'F:\\test\\vid1_H265.mp4', 'transcoding', 'nvenc_hq_10bit', 1000000, 62.5)
+            """)
+            tx.execute("""
+                INSERT OR REPLACE INTO transcodes (id, source_file_id, output_path, status, profile, original_size, progress)
+                VALUES (9992, 999902, 'F:\\test\\vid2_H265.mp4', 'paused', 'nvenc_hq_10bit', 1000000, 30.0)
+            """)
+
+        # 2. Test recover_orphaned_jobs() recovers dead 'transcoding' records to 'paused'
+        transcode_queue.recover_orphaned_jobs()
+        cursor.execute("SELECT status, progress FROM transcodes WHERE id = 9991")
+        job9991 = cursor.fetchone()
+        self.assertEqual(job9991["status"], "paused", "Orphaned job was not recovered to paused")
+        self.assertEqual(job9991["progress"], 62.5, "Progress was altered unexpectedly during orphan recovery")
+
+        # 3. Test individual pause_job()
+        transcode_queue.pause_job(9992)
+        cursor.execute("SELECT status FROM transcodes WHERE id = 9992")
+        self.assertEqual(cursor.fetchone()["status"], "paused")
+
+        # 4. Test individual resume_job() sets priority and marks pending
+        # Prevent actual background worker execution during unit test
+        with transcode_queue.lock:
+            transcode_queue.is_running = True
+        transcode_queue.resume_job(9991)
+        self.assertEqual(transcode_queue.priority_job_id, 9991, "Priority job was not set")
+        cursor.execute("SELECT status FROM transcodes WHERE id = 9991")
+        self.assertEqual(cursor.fetchone()["status"], "pending", "Resumed job status was not set to pending")
+
+        # 5. Test individual restart_job() resets progress to 0.0
+        transcode_queue.restart_job(9992)
+        self.assertEqual(transcode_queue.priority_job_id, 9992)
+        cursor.execute("SELECT status, progress FROM transcodes WHERE id = 9992")
+        job9992 = cursor.fetchone()
+        self.assertEqual(job9992["status"], "pending")
+        self.assertEqual(job9992["progress"], 0.0)
+
+        # 6. Test individual remove_job() deletes from database
+        transcode_queue.remove_job(9991)
+        transcode_queue.remove_job(9992)
+        cursor.execute("SELECT id FROM transcodes WHERE id IN (9991, 9992)")
+        self.assertEqual(len(cursor.fetchall()), 0, "Jobs were not removed from database")
+
+        # Clean up worker flag and test files
+        with transcode_queue.lock:
+            transcode_queue.is_running = False
+            transcode_queue.priority_job_id = None
+        with db_transaction() as tx:
+            tx.execute("DELETE FROM files WHERE id IN (999901, 999902)")
+
+        # 7. Test fast duplicate savings estimation
+        est_savings = DuplicateDetector.estimate_potential_savings()
+        self.assertIsInstance(est_savings, int)
+        self.assertGreaterEqual(est_savings, 0)
+
 if __name__ == "__main__":
     unittest.main()
+
 

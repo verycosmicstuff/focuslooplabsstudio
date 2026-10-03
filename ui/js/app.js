@@ -303,38 +303,53 @@ function refreshCurrentTab() {
 
 async function loadOverview() {
   try {
-    const [statsRes, sourcesRes] = await Promise.all([
-      fetch(API_BASE + '/api/stats').then(r => r.json()),
-      fetch(API_BASE + '/api/sources').then(r => r.json())
-    ]);
+    let statsRes = null;
+    let sourcesRes = [];
 
-    document.getElementById('stat-total-size').innerText = formatBytes(statsRes.media.total_size);
-    document.getElementById('stat-total-files').innerText = (statsRes.media.total_files || 0).toLocaleString() + ' files indexed (' + (statsRes.media.raw_count || 0) + ' RAW, ' + (statsRes.media.video_count || 0) + ' Vids)';
-    document.getElementById('stat-reclaimable').innerText = formatBytes(statsRes.total_potential_savings_bytes);
-    document.getElementById('stat-blurry-size').innerText = formatBytes(statsRes.blurry.blurry_size);
-    document.getElementById('stat-blurry-count').innerText = (statsRes.blurry.blurry_count || 0) + ' flagged blurry';
-    document.getElementById('stat-dupes-size').innerText = formatBytes(statsRes.duplicate_savings_bytes);
-    document.getElementById('stat-transcode-size').innerText = formatBytes(statsRes.transcode_savings_est_bytes);
+    try {
+      const sResp = await fetch(API_BASE + '/api/stats');
+      if (sResp.ok) statsRes = await sResp.json();
+    } catch (e) {
+      console.error('Failed to fetch stats:', e);
+    }
 
-    sourcesData = sourcesRes;
+    try {
+      const srcResp = await fetch(API_BASE + '/api/sources');
+      if (srcResp.ok) sourcesRes = await srcResp.json();
+    } catch (e) {
+      console.error('Failed to fetch sources:', e);
+    }
+
+    if (statsRes && statsRes.media) {
+      document.getElementById('stat-total-size').innerText = formatBytes(statsRes.media.total_size);
+      document.getElementById('stat-total-files').innerText = (statsRes.media.total_files || 0).toLocaleString() + ' files indexed (' + (statsRes.media.raw_count || 0) + ' RAW, ' + (statsRes.media.video_count || 0) + ' Vids)';
+      document.getElementById('stat-reclaimable').innerText = formatBytes(statsRes.total_potential_savings_bytes);
+      document.getElementById('stat-blurry-size').innerText = formatBytes(statsRes.blurry.blurry_size);
+      document.getElementById('stat-blurry-count').innerText = (statsRes.blurry.blurry_count || 0) + ' flagged blurry';
+      document.getElementById('stat-dupes-size').innerText = formatBytes(statsRes.duplicate_savings_bytes);
+      document.getElementById('stat-transcode-size').innerText = formatBytes(statsRes.transcode_savings_est_bytes);
+    }
+
+    sourcesData = sourcesRes || [];
     const drivesContainer = document.getElementById('overview-drives-list');
-    drivesContainer.innerHTML = '';
+    if (drivesContainer && sourcesRes && sourcesRes.length > 0) {
+      drivesContainer.innerHTML = '';
+      sourcesRes.forEach(src => {
+        const usedBytes = src.total_bytes - src.free_bytes;
+        const pct = src.total_bytes > 0 ? Math.round((usedBytes / src.total_bytes) * 100) : 0;
+        let barClass = '';
+        if (pct > 90) barClass = 'danger';
+        else if (pct > 75) barClass = 'warning';
 
-    sourcesRes.forEach(src => {
-      const usedBytes = src.total_bytes - src.free_bytes;
-      const pct = src.total_bytes > 0 ? Math.round((usedBytes / src.total_bytes) * 100) : 0;
-      let barClass = '';
-      if (pct > 90) barClass = 'danger';
-      else if (pct > 75) barClass = 'warning';
-
-      const card = document.createElement('div');
-      card.className = 'drive-card';
-      card.innerHTML = '<div class="drive-header"><div class="drive-name">' + src.label + '</div><div class="drive-badge">' + src.drive_type + '</div></div>'
-        + '<div class="meter-bar"><div class="meter-fill ' + barClass + '" style="width:' + pct + '%"></div></div>'
-        + '<div class="drive-info"><span>' + formatBytes(usedBytes) + ' used of ' + formatBytes(src.total_bytes) + '</span><span style="font-weight:600;">' + pct + '%</span></div>'
-        + '<div style="font-size:11px; color:var(--text-muted); margin-top:8px; display:flex; justify-content:space-between;"><span>Path: ' + src.path + '</span><span>Indexed: ' + formatBytes(src.total_media_size) + '</span></div>';
-      drivesContainer.appendChild(card);
-    });
+        const card = document.createElement('div');
+        card.className = 'drive-card';
+        card.innerHTML = '<div class="drive-header"><div class="drive-name">' + src.label + '</div><div class="drive-badge">' + src.drive_type + '</div></div>'
+          + '<div class="meter-bar"><div class="meter-fill ' + barClass + '" style="width:' + pct + '%"></div></div>'
+          + '<div class="drive-info"><span>' + formatBytes(usedBytes) + ' used of ' + formatBytes(src.total_bytes) + '</span><span style="font-weight:600;">' + pct + '%</span></div>'
+          + '<div style="font-size:11px; color:var(--text-muted); margin-top:8px; display:flex; justify-content:space-between;"><span>Path: ' + src.path + '</span><span>Indexed: ' + formatBytes(src.total_media_size) + '</span></div>';
+        drivesContainer.appendChild(card);
+      });
+    }
   } catch (err) {
     console.error('Failed to load overview:', err);
   }
@@ -1492,6 +1507,21 @@ async function loadTranscoder() {
           const qFolderName = q.folder_name || 'Folder';
           const qSubLoc = q.source_label || (q.source_path ? q.source_path.substring(0, 20) + '...' : '');
 
+          let actionsHtml = '<div style="display:flex; gap:4px; justify-content:flex-end; align-items:center;">';
+          if (q.status === 'paused' || q.status === 'pending') {
+            actionsHtml += '<button class="btn btn-secondary btn-sm btn-resume-job" data-id="' + q.id + '" title="Resume / Prioritize this transcode" style="padding:3px 8px; font-size:11px; color:var(--accent-emerald); border-color:rgba(16,185,129,0.3);">▶ Resume</button>';
+          } else if (q.status === 'transcoding') {
+            actionsHtml += '<button class="btn btn-secondary btn-sm btn-pause-job" data-id="' + q.id + '" title="Pause this transcode" style="padding:3px 8px; font-size:11px; color:var(--accent-amber); border-color:rgba(245,158,11,0.3);">⏸ Pause</button>';
+          }
+          if (q.status === 'paused' || q.status === 'failed' || q.status === 'cancelled' || q.status === 'completed') {
+            actionsHtml += '<button class="btn btn-secondary btn-sm btn-restart-job" data-id="' + q.id + '" title="Restart transcode from 0%" style="padding:3px 8px; font-size:11px; color:var(--accent-cyan); border-color:rgba(6,182,212,0.3);">🔄 Restart</button>';
+          }
+          if (q.status !== 'completed' && q.status !== 'already_optimal') {
+            actionsHtml += '<button class="btn btn-secondary btn-sm btn-remove-job" data-id="' + q.id + '" title="Remove from queue" style="padding:3px 7px; font-size:11px; color:var(--accent-rose); border-color:rgba(244,63,94,0.3);">✕</button>';
+          }
+          actionsHtml += '<button class="btn btn-secondary btn-sm btn-open-queue" title="Reveal in File Explorer" style="padding:3px 8px; font-size:11px;">📂 Open</button>';
+          actionsHtml += '</div>';
+
           qtr.innerHTML = '<td style="font-weight:600;" title="' + escapeHtml(q.source_path) + '">' + escapeHtml(q.filename) + '</td>'
             + '<td>'
             +   '<div class="folder-cell" title="' + escapeHtml(q.source_path) + '">'
@@ -1502,9 +1532,71 @@ async function loadTranscoder() {
             + '<td><span style="font-size:11px; color:var(--text-muted);">' + (q.profile || 'NVENC') + '</span></td>'
             + '<td>' + formatBytes(q.original_size) + '</td>'
             + '<td>' + statusBadge + '</td>'
-            + '<td style="text-align:center;">'
-            +   '<button class="btn btn-secondary btn-sm btn-open-queue" title="Reveal in File Explorer" style="padding:3px 8px; font-size:11px;">📂 Open</button>'
+            + '<td style="text-align:right;">'
+            +   actionsHtml
             + '</td>';
+
+          const btnResume = qtr.querySelector('.btn-resume-job');
+          if (btnResume) {
+            btnResume.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              btnResume.disabled = true;
+              try {
+                await fetch(API_BASE + '/api/transcodes/' + q.id + '/resume', { method: 'POST' });
+                loadTranscoder();
+              } catch (err) {
+                console.error(err);
+                alert('Failed to resume transcode: ' + err);
+              }
+            });
+          }
+
+          const btnPause = qtr.querySelector('.btn-pause-job');
+          if (btnPause) {
+            btnPause.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              btnPause.disabled = true;
+              try {
+                await fetch(API_BASE + '/api/transcodes/' + q.id + '/pause', { method: 'POST' });
+                loadTranscoder();
+              } catch (err) {
+                console.error(err);
+                alert('Failed to pause transcode: ' + err);
+              }
+            });
+          }
+
+          const btnRestart = qtr.querySelector('.btn-restart-job');
+          if (btnRestart) {
+            btnRestart.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              if (!confirm(`Restart transcode for "${q.filename}" from 0%?`)) return;
+              btnRestart.disabled = true;
+              try {
+                await fetch(API_BASE + '/api/transcodes/' + q.id + '/restart', { method: 'POST' });
+                loadTranscoder();
+              } catch (err) {
+                console.error(err);
+                alert('Failed to restart transcode: ' + err);
+              }
+            });
+          }
+
+          const btnRemove = qtr.querySelector('.btn-remove-job');
+          if (btnRemove) {
+            btnRemove.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              if (!confirm(`Remove "${q.filename}" from the transcode queue?`)) return;
+              btnRemove.disabled = true;
+              try {
+                await fetch(API_BASE + '/api/transcodes/' + q.id, { method: 'DELETE' });
+                loadTranscoder();
+              } catch (err) {
+                console.error(err);
+                alert('Failed to remove transcode: ' + err);
+              }
+            });
+          }
 
           const btnOpenQ = qtr.querySelector('.btn-open-queue');
           if (btnOpenQ) {

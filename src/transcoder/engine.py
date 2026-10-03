@@ -437,10 +437,24 @@ class TranscodeQueue:
     def __init__(self):
         self.jobs: Dict[int, TranscodeJob] = {}
         self.current_job: Optional[TranscodeJob] = None
+        self.priority_job_id: Optional[int] = None
         self.lock = threading.Lock()
         self.is_running = False
         self.is_paused = False
         self.perf_mode = "balanced"
+        self.recover_orphaned_jobs()
+
+    def recover_orphaned_jobs(self):
+        """Recovers any jobs left in 'transcoding' state without an active process, setting them to 'paused'."""
+        try:
+            with db_transaction() as tx:
+                tx.execute("""
+                    UPDATE transcodes 
+                    SET status = 'paused', speed = '0x', fps = 0.0 
+                    WHERE status = 'transcoding'
+                """)
+        except Exception as e:
+            logger.error(f"Error recovering orphaned transcode jobs: {e}")
 
     def set_performance_mode(self, mode: str):
         if mode in PERFORMANCE_MODES:
@@ -490,19 +504,96 @@ class TranscodeQueue:
     def resume_current(self):
         self.resume()
 
-    def cancel_job(self, transcode_id: int):
+    def resume_job(self, transcode_id: int):
+        """Resumes a specific individual job. If it's active in memory, resumes process. Otherwise queues it first."""
         with self.lock:
             if self.current_job and self.current_job.transcode_id == transcode_id:
-                if self.current_job.is_paused and self.current_job.process:
-                    try:
-                        p = psutil.Process(self.current_job.process.pid)
-                        p.resume()
-                    except Exception:
-                        pass
+                if self.current_job.process and self.current_job.process.poll() is None:
+                    self.current_job.resume()
+                    self.is_paused = False
+                    return
+                else:
+                    self.current_job = None
+
+            # If another job is currently paused in memory and user wants THIS job now:
+            if self.current_job and self.current_job.is_paused:
                 self.current_job.cancel()
+                self.current_job = None
+
+            self.priority_job_id = transcode_id
+            self.is_paused = False
+            with db_transaction() as tx:
+                tx.execute("""
+                    UPDATE transcodes 
+                    SET status = 'pending', error_msg = NULL, fps = 0.0, speed = '' 
+                    WHERE id = ?
+                """, (transcode_id,))
+        self.start_worker_if_needed()
+
+    def pause_job(self, transcode_id: int):
+        """Pauses a specific individual job."""
+        with self.lock:
+            if self.current_job and self.current_job.transcode_id == transcode_id:
+                self.current_job.pause()
+                self.is_paused = True
             else:
                 with db_transaction() as tx:
-                    tx.execute("UPDATE transcodes SET status = 'cancelled' WHERE id = ?", (transcode_id,))
+                    tx.execute("""
+                        UPDATE transcodes 
+                        SET status = 'paused', speed = '0x', fps = 0.0 
+                        WHERE id = ?
+                    """, (transcode_id,))
+
+    def restart_job(self, transcode_id: int):
+        """Restarts a specific job from 0%, unlinking partial output file and resetting progress."""
+        with self.lock:
+            if self.current_job and self.current_job.transcode_id == transcode_id:
+                self.current_job.cancel()
+                self.current_job = None
+
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute("SELECT output_path FROM transcodes WHERE id = ?", (transcode_id,))
+            row = cursor.fetchone()
+            if row and row["output_path"]:
+                try:
+                    Path(row["output_path"]).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+            with db_transaction() as tx:
+                tx.execute("""
+                    UPDATE transcodes 
+                    SET status = 'pending', progress = 0.0, speed = '', fps = 0.0, error_msg = NULL 
+                    WHERE id = ?
+                """, (transcode_id,))
+
+            self.priority_job_id = transcode_id
+            self.is_paused = False
+        self.start_worker_if_needed()
+
+    def remove_job(self, transcode_id: int):
+        """Cancels and removes a job from the queue."""
+        with self.lock:
+            if self.current_job and self.current_job.transcode_id == transcode_id:
+                self.current_job.cancel()
+                self.current_job = None
+
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute("SELECT output_path, status FROM transcodes WHERE id = ?", (transcode_id,))
+            row = cursor.fetchone()
+            if row and row["output_path"] and row["status"] != "completed":
+                try:
+                    Path(row["output_path"]).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+            with db_transaction() as tx:
+                tx.execute("DELETE FROM transcodes WHERE id = ?", (transcode_id,))
+
+    def cancel_job(self, transcode_id: int):
+        self.remove_job(transcode_id)
 
     def start_worker_if_needed(self):
         with self.lock:
@@ -522,16 +613,32 @@ class TranscodeQueue:
                         break
                 time.sleep(0.5)
 
+            with self.lock:
+                priority_id = self.priority_job_id
+                self.priority_job_id = None
+
             conn = get_db()
             cursor = conn.cursor()
-            cursor.execute("""
-                SELECT t.id, t.source_file_id, t.output_path, t.profile, f.abs_path
-                FROM transcodes t
-                JOIN files f ON t.source_file_id = f.id
-                WHERE t.status IN ('pending', 'paused')
-                ORDER BY t.id ASC LIMIT 1
-            """)
-            row = cursor.fetchone()
+            row = None
+            if priority_id:
+                cursor.execute("""
+                    SELECT t.id, t.source_file_id, t.output_path, t.profile, f.abs_path
+                    FROM transcodes t
+                    JOIN files f ON t.source_file_id = f.id
+                    WHERE t.id = ? AND t.status IN ('pending', 'paused')
+                """, (priority_id,))
+                row = cursor.fetchone()
+
+            if not row:
+                cursor.execute("""
+                    SELECT t.id, t.source_file_id, t.output_path, t.profile, f.abs_path
+                    FROM transcodes t
+                    JOIN files f ON t.source_file_id = f.id
+                    WHERE t.status IN ('pending', 'paused')
+                    ORDER BY t.id ASC LIMIT 1
+                """)
+                row = cursor.fetchone()
+
             if not row:
                 with self.lock:
                     self.is_running = False
